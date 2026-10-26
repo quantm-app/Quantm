@@ -154,16 +154,19 @@ test('a stalled silent deck restores the outgoing song and retries the pair as a
   assert.equal(p.prepared.preroll, null);
 });
 
-test('skips during and just after drop cuts are recorded by style and tempo without changing blend parameters', t => {
+test('thumbs-down ratings of drop cuts are recorded by style and tempo without changing blend parameters, and plain skips teach nothing', t => {
   const { p, f, ctx } = fixture(t);
   p.beginFade();
   ctx.currentTime = f.schedule.start;
   mixlearn.reset();
-  for (const during of [true, false]) {
+  for (const [i, during] of [true, false].entries()) {
     p.fading = during ? f : null;
     const choice = { ...mixlearn.choose('mid', () => 0.2), style: 'dropcut' };
     p.mixOutcome = { choice, trackId: p.current.id, mixEnd: during ? null : performance.now() };
     p.noteSkip();
+    assert.equal(mixlearn.stats().transitions, i, 'an unrated skip is ignored');
+    p.mixOutcome = { choice, trackId: p.current.id, mixEnd: during ? null : performance.now(), rateable: true };
+    assert.equal(p.rateMix('bad'), true);
   }
   assert.equal(mixlearn.stats().buckets.mid.styles.dropcut.bad, 2);
   assert.equal(mixlearn.avoidsDropCut('mid'), true);

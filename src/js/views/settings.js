@@ -697,12 +697,12 @@ function autoMixLearning() {
     const songs = mixmemory.count();
     const mixes = mixlearn.stats().transitions;
     status.textContent = songs || mixes
-      ? `Remembers ${songs} song${songs === 1 ? '' : 's'} and has learned from ${mixes} mix${mixes === 1 ? '' : 'es'}. It gets better the more you listen; skipping during or right after a mix teaches it too.`
-      : 'Learns as you listen: each song it plays is remembered, and skipping during or right after a mix teaches it what you like.';
+      ? `Remembers ${songs} song${songs === 1 ? '' : 's'} and has learned from ${mixes} mix${mixes === 1 ? '' : 'es'}. It gets better the more you listen; rate a mix with the thumbs in the player and it learns from that too.`
+      : 'Learns as you listen: each song it plays is remembered, and the thumbs up or down on a mix teach it what you like.';
   };
   show();
   const reset = button('Reset what it learned', async () => {
-    const ok = await confirmDialog('Reset Auto mix?', 'It forgets every song it remembers and what it learned from your skips. Your own mix points (I and O) stay.', 'Reset');
+    const ok = await confirmDialog('Reset Auto mix?', 'It forgets every song it remembers and what it learned from your ratings. Your own mix points (I and O) stay.', 'Reset');
     if (!ok) return;
     mixmemory.reset();
     mixlearn.reset();
@@ -782,8 +782,8 @@ async function autoMixTab(cleanups) {
             (Math.abs(s.lock.nudge) > 0.001 ? `, nudging ${pct(s.lock.nudge, 1)}` : '')
           : 'mix done, easing back to its own tempo', tone));
       }
-      if (s.outcome) rows.push(row('Verdict', s.outcome.during ? 'mixing: skip now and it learns this mix was wrong'
-        : `waiting to see if you keep it: ${Math.min(20, s.outcome.listened || 0).toFixed(0)} of 20 s listened`));
+      if (s.outcome) rows.push(row('Verdict', s.outcome.during ? 'mixing: rate it with the thumbs in the player (skipping alone teaches nothing)'
+        : `waiting to see if you keep it or rate it: ${Math.min(20, s.outcome.listened || 0).toFixed(0)} of 20 s listened`));
     }
     now.replaceChildren(...rows);
   };
@@ -792,15 +792,22 @@ async function autoMixTab(cleanups) {
     const stats = mixlearn.stats();
     const songs = mixmemory.count();
     const head = h('p.settings-row-desc', `Remembers ${songs} song${songs === 1 ? '' : 's'}  ·  learned from ${stats.transitions} mix${stats.transitions === 1 ? '' : 'es'}`);
-    const ranges = AUTOMIX_RANGES.filter(([id]) => stats.buckets[id]);
-    const table = ranges.length ? h('table.automix-table',
-      h('thead', h('tr', ['Tempo', 'Mix length', 'DJ blend', 'Tempo stretch', 'Kept', 'Skipped', 'Drop cuts kept / skipped'].map(t => h('th', t)))),
-      h('tbody', ranges.map(([id, label]) => {
-        const b = stats.buckets[id];
-        return h('tr', h('td', label), h('td', pct(b.length)), h('td', pct(b.dj)), h('td', 'up to ' + pct(b.stretch, 1)), h('td', String(b.good)), h('td', String(b.bad)),
-          h('td', `${b.styles?.dropcut?.good || 0} / ${b.styles?.dropcut?.bad || 0}`));
-      }))
-    ) : h('p.muted.small', 'Nothing yet. Every mix you keep or skip shows up here. It starts at 100% length, full DJ blend and up to 8% stretch, and moves slowly.');
+    // genre + tempo rows first, then the any-genre tempo rows they borrow from until they have enough mixes
+    const rows = [];
+    for (const [id, label] of AUTOMIX_RANGES) {
+      for (const family of Object.keys(mixlearn.FAMILY_LABELS)) {
+        const b = stats.genres[`${family}:${id}`];
+        if (b) rows.push({ b, genre: mixlearn.FAMILY_LABELS[family], label, young: b.good + b.bad < mixlearn.MIN_OUTCOMES });
+      }
+    }
+    for (const [id, label] of AUTOMIX_RANGES) if (stats.buckets[id]) rows.push({ b: stats.buckets[id], genre: 'Any genre', label });
+    const table = rows.length ? h('table.automix-table',
+      h('thead', h('tr', ['Genre', 'Tempo', 'Mix length', 'DJ blend', 'Tempo stretch', 'Good', 'Bad', 'Drop cuts good / bad'].map(t => h('th', t)))),
+      h('tbody', rows.map(({ b, genre, label, young }) =>
+        h('tr', h('td', young ? { title: `Still borrowing from the Any genre values until it has ${mixlearn.MIN_OUTCOMES} mixes` } : null, genre + (young ? ' (new)' : '')),
+          h('td', label), h('td', pct(b.length)), h('td', pct(b.dj)), h('td', 'up to ' + pct(b.stretch, 1)), h('td', String(b.good)), h('td', String(b.bad)),
+          h('td', `${b.styles?.dropcut?.good || 0} / ${b.styles?.dropcut?.bad || 0}`))))
+    ) : h('p.muted.small', 'Nothing yet. Every mix you keep or rate shows up here. It starts at 100% length, full DJ blend and up to 8% stretch, and moves slowly.');
     learned.replaceChildren(head, table);
   };
 
@@ -819,13 +826,13 @@ async function autoMixTab(cleanups) {
   cleanups.push(() => clearInterval(timer));
 
   return h('div',
-    card('Auto mix', 'DJ-style transitions that learn from every song and every skip. Updates live while you listen.',
+    card('Auto mix', 'DJ-style transitions that learn from every song and every rating. Updates live while you listen.',
       toggleRow('Auto mix', 'Beat-matched mixes between songs. Also in Playback → Crossfade.', settings.autoMix === true, (on) => saveSettings({ autoMix: on })),
       selectRow('Transition style', 'Smooth blend mixes over the end of each song. Drop cut skips to the next song’s drop; Auto uses it for energetic electronic pairs with a clear drop.',
         [{ id: 'blend', label: 'Smooth blend (default)' }, { id: 'auto', label: 'Auto' }, { id: 'dropcut', label: 'Drop cut' }],
         settings.transitionStyle || 'blend', value => saveSettings({ transitionStyle: value, transitionStyleChosen: true })),
       now),
-    card('What it has learned', 'Slowly, per tempo range: what it tries next starts from these.', learned, autoMixLearning()),
+    card('What it has learned', 'Slowly, per genre and tempo range: what it tries next starts from these. A genre starts from the any-genre values for its tempo.', learned, autoMixLearning()),
     card('Activity', null, feed)
   );
 }

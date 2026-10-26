@@ -102,6 +102,44 @@ export function features(track, { memory = null, waveform = null } = {}) {
     tags: parseTags(track?.tag_list), energy: energyShape(waveform) };
 }
 
+const word = source => new RegExp(`(?<![a-z0-9])(?:${source})(?![a-z0-9])`);
+const FAMILY_TERMS = {
+  bass: word("dubstep|riddim|brostep|drum ?(?:&|and|n|'n') ?bass|d(?:&|'n')b|dnb|jungle|breakbeats?|breaks|neurofunk|liquid funk|glitch hop|bass"),
+  hiphop: word('hip ?-?hop|rap|trap|drill|boom ?bap|grime|phonk|cloud rap'),
+  dance: word('house|techno|trance|psytrance|deephouse|techhouse|hardtechno|hardstyle|4x4|four on the floor|uk garage|speed garage|ukg|2-?step|disco')
+};
+const DANCE_GENERIC = word('edm|electro(?:nic|house)?|electronica|dance|club|rave');
+const OTHER_TERMS = word("pop|rock|indie|folk|jazz|country|r&b|rnb|soul|blues|metal|punk|classical|ambient|acoustic|singer ?-?songwriter|reggae|dancehall|latin|k-?pop|gospel|funk|alternative|piano|lo-?fi");
+// Song titles are chatty ("Bass Down Low", "House of Cards"): only the unmistakable terms count there.
+const TITLE_TERMS = {
+  bass: word("dubstep|riddim|drum ?(?:&|and|n|'n') ?bass|dnb"),
+  hiphop: word('hip ?-?hop|trap|boom ?bap'),
+  dance: word('techno|trance|house music|deep house|tech house|progressive house|4x4')
+};
+const FAMILY_ORDER = ['bass', 'hiphop', 'dance'];
+const familyOf = (text, terms) => FAMILY_ORDER.find(family => terms[family].test(text)) || null;
+
+/**
+ * Coarse genre family for a track or its features: 'bass' (dubstep, riddim, drum and bass, jungle, breaks),
+ * 'hiphop' (hip-hop, rap, trap), 'dance' (house, techno, trance, 4x4, general electronic), 'other' (pop,
+ * rock and the like) or 'unknown' (nothing to go on). Reads the genre, then the tags, then the title
+ * (clear terms only); a specific style anywhere beats the general "electronic" or "dance".
+ */
+export function genreFamily(source) {
+  const genre = normalize(source?.genre);
+  const tags = Array.isArray(source?.tags) ? source.tags.map(normalize) : parseTags(source?.tag_list);
+  const texts = [genre, ...tags].filter(Boolean);
+  for (const text of texts) {
+    const family = familyOf(text, FAMILY_TERMS);
+    if (family) return family;
+  }
+  if (texts.some(text => DANCE_GENERIC.test(text))) return 'dance';
+  if (texts.some(text => OTHER_TERMS.test(text))) return 'other';
+  const title = familyOf(normalize(source?.title), TITLE_TERMS);
+  if (title) return title;
+  return genre ? 'other' : 'unknown';
+}
+
 /** Return the closest playback ratio even when no half/double-time option fits. */
 export function tempoFit(bpmA, bpmB, maxStretch = 0.08) {
   if (!positive(bpmA) || !positive(bpmB)) return null;

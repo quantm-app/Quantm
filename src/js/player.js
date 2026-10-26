@@ -15,7 +15,6 @@ import { planStyle, futureWindow, rollSchedule, dropPhase } from './dropcut.js';
 
 const mmss = (t) => { const s = Math.max(0, Math.round(t || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const quote = (track) => '"' + ((track && track.title) || 'this song').slice(0, 60) + '"';
-const TEMPO_RANGES = { slow: 'under 100 BPM', mid: '100-130 BPM', fast: '130-160 BPM', faster: '160+ BPM', nobeat: 'songs without a clear beat' };
 
 /** Uniformly random order (Fisher-Yates), returns a new array */
 function randomOrder(list) {
@@ -60,7 +59,9 @@ class Player extends Emitter {
     this.mixPlan = null;    // Auto mix: { loadId, grid, span, choice } for the current song's ending
     this.listening = new Map(); // Auto mix song memory: <audio> → { trackId, listener, after, duration }
     this.waves = new Map();     // track id → structure guessed from SoundCloud's waveform (first plays)
-    this.mixOutcome = null;     // Auto mix learning: the last transition, until we know if it was kept
+    // Auto mix learning: the last transition, until it is rated or we know it was kept (the setter keeps the rating control in sync)
+    this._mixOutcome = null;
+    this._ratingShown = null;   // the outcome the thumbs control is showing for
     this.mixLog = [];           // Auto mix activity, newest first (Settings → Auto mix shows it live)
     this.mixAt = null;          // Auto mix: { loadId, at } media time the planned mix starts
     setInterval(() => this.feedMemory(), 1000);
@@ -112,6 +113,8 @@ class Player extends Emitter {
   get audio() { return this.deck.audio; }
   get current() { return this.queue[this.index] || null; }
   get playing() { return !this.audio.paused; }
+  get mixOutcome() { return this._mixOutcome; }
+  set mixOutcome(outcome) { this._mixOutcome = outcome; this.syncMixRating(); }
   get duration() {
     const d = this.audio.duration;
     return isFinite(d) && d > 0 ? d : (this.current ? this.current.duration / 1000 : 0);
@@ -813,18 +816,48 @@ class Player extends Emitter {
 
   // ---- Auto mix learning: did the listener keep the song we mixed into? ----
 
-  /** The listener skipped or went back: a mix still playing or just finished counts as a miss */
+  /** The listener skipped or went back. A plain skip says nothing about the mix (they may just not want that song): only a thumbs rating counts, so this just ends the listening window. */
   noteSkip() {
-    const o = this.mixOutcome;
-    if (!o) return;
-    this.mixOutcome = null;
-    clearTimeout(o.timer);
-    if (!this.current || this.current.id !== o.trackId) return;
-    if (this.fading?.style === 'dropcut' && (!this.fading.dropScheduled || this.normalizer.ctx.currentTime < this.fading.schedule.start)) return;
-    if (this.fading || (o.mixEnd && performance.now() - o.mixEnd < 20000)) {
-      mixlearn.record(o.choice, 'bad');
-      this.logMix('bad', `You skipped ${this.fading ? 'during' : 'right after'} the ${o.choice.style === 'dropcut' ? 'drop cut' : 'smooth blend'} into ${quote(this.current)}: learning for ${TEMPO_RANGES[o.choice.bucket]}`);
-    }
+    this.clearMixOutcome();
+  }
+
+  /** The genre family (mixorder.js) of a track, for learning per genre */
+  mixFamily(track) {
+    return mixorder.genreFamily({ ...this.mixFeatures(track), title: track?.title });
+  }
+
+  /** The transition you can rate right now: { track, style } from when the incoming song takes over until the listening window ends, else null */
+  get mixRating() {
+    const o = this._mixOutcome;
+    return o?.rateable && this.current?.id === o.trackId ? { track: this.current, style: o.choice.style } : null;
+  }
+
+  /** Tell the thumbs control when it should appear or disappear */
+  syncMixRating() {
+    const rating = this.mixRating;
+    const shown = rating ? this._mixOutcome : null;
+    if (shown === this._ratingShown) return;
+    this._ratingShown = shown;
+    this.emit('mixrate', rating);
+  }
+
+  /** The incoming song has taken over: let the listener rate this transition */
+  openMixRating(track) {
+    const o = this._mixOutcome;
+    if (!o || o.trackId !== track.id) return;
+    o.rateable = true;
+    this.syncMixRating();
+  }
+
+  /** Thumbs up ('good') or down ('bad') for the transition in the listening window. Records it now and ends the window. Returns false when there is nothing to rate. */
+  rateMix(outcome) {
+    const rating = this.mixRating;
+    if (!rating || (outcome !== 'good' && outcome !== 'bad')) return false;
+    const { choice } = this._mixOutcome;
+    this.clearMixOutcome();
+    mixlearn.record(choice, outcome);
+    this.logMix(outcome, `You rated the ${choice.style === 'dropcut' ? 'drop cut' : 'smooth blend'} into ${quote(rating.track)}: ${outcome} (learning for ${mixlearn.describeBucket(choice.bucket)})`);
+    return true;
   }
 
   clearMixOutcome() {
@@ -849,8 +882,9 @@ class Player extends Emitter {
     if (left > (MAX_MIX_SECONDS + AUTO_LEAD + 1) * rate) return { span: 0 };
     const known = this.structureOf(this.current.id);
     const grid = this.outgoingGrid(audio, dur);
-    // learned taste for this tempo: a small variation is tried each time (mixlearn.js)
-    const choice = previous && !grid ? previous.choice : mixlearn.choose(mixlearn.bucketFor(grid?.bpm));
+    // learned taste for this genre and tempo: a small variation is tried each time (mixlearn.js).
+    // The family is the outgoing song's: its genre and tempo set the mood of the mix.
+    const choice = previous && !grid ? previous.choice : mixlearn.choose(mixlearn.bucketFor(grid?.bpm, this.mixFamily(this.current)));
     let span = mixSeconds(grid, rate, choice.params.length);
     // a song whose outro is known: mix over the whole outro, in whole bars
     const outro = known.outroStart != null ? dur - known.outroStart : 0;
@@ -895,7 +929,7 @@ class Player extends Emitter {
     if (!drop) return planStyle({ drop: null });
     const selected = planStyle({ style: settings.transitionStyle, pair: transition, drop, gridOut,
       features: [this.current, prep.track].map(track => ({ ...this.mixFeatures(track), title: track.title })),
-      rejected: mixlearn.avoidsDropCut(mixlearn.bucketFor(gridOut?.bpm)),
+      rejected: mixlearn.avoidsDropCut(mixlearn.bucketFor(gridOut?.bpm, this.mixFamily(this.current))),
       ready: !prep.dropFailed && !!pre?.done && !prep.stream.snipped && pre.deck !== this.deck && pre.deck.track === prep.track });
     if (selected.style !== 'dropcut') return selected;
     // There is no audible overlap to tempo-match. Pre-roll at the outgoing rate
@@ -1136,7 +1170,7 @@ class Player extends Emitter {
     if (!dropcut && pre && (pre.candidate || pre.drop)) pre.startAt = plan ? this.autoStartAt(prep.track, transition.in || 0) : Math.max(0, transition.in || 0);
     const startAt = dropcut ? selected.drop.time - seconds * rate * selected.match.ratio :
       pre ? pre.startAt : plan ? this.autoStartAt(prep.track, transition.in || 0) : Math.max(0, transition.in || 0);
-    let choice = plan ? plan.choice : dropcut ? mixlearn.choose(mixlearn.bucketFor(selected.match.gridOut.bpm)) : null;
+    let choice = plan ? plan.choice : dropcut ? mixlearn.choose(mixlearn.bucketFor(selected.match.gridOut.bpm, this.mixFamily(this.current))) : null;
     let match = null;
     if (pre) {
       this.endPreroll(pre);
@@ -1152,7 +1186,7 @@ class Player extends Emitter {
       const gridIn = pre.grid || this.structureOf(prep.track.id).grid;
       match = matchTempo(gridOut, gridIn, choice ? choice.params.stretch : 0.08);
       // the tempo only became clear now: file what this mix teaches under its real tempo range
-      if (choice && choice.bucket === 'nobeat' && match) choice = Object.assign({}, choice, { bucket: mixlearn.bucketFor(match.gridOut.bpm) });
+      if (choice && mixlearn.parseBucket(choice.bucket)?.tempo === 'nobeat' && match) choice = Object.assign({}, choice, { bucket: mixlearn.rebucket(choice.bucket, match.gridOut.bpm) });
     }
     if (dropcut) match = selected.match;
     if (choice) choice = { ...choice, style: selected.style };
@@ -1235,6 +1269,7 @@ class Player extends Emitter {
     const left = f.seconds * (1 - f.progress);
     if (!f.announced) { f.announced = true; this.emit('transition', { phase: 'start', from: f.from, to: f.to }); }
     f.startedAt = norm.ctx.currentTime;
+    this.openMixRating(f.to);
     norm.fadeDeck(f.incoming.audio, true, left, f.progress, f.shapeIn);
     norm.fadeDeck(f.outgoing.audio, false, left, f.progress, f.shapeOut);
     if (f.bass) {
@@ -1329,6 +1364,7 @@ class Player extends Emitter {
           return;
         }
         f.landed = true;
+        this.openMixRating(f.to);
         b.playbackRate = baseRate;
         // Release from the actual matched rate without starting phase correction or resetting it.
         this.lock = new BeatLock(a, b, plan.match, this.rate, false);
@@ -1453,7 +1489,7 @@ class Player extends Emitter {
         if (this.audio.currentTime - o.position >= 20) {
           this.mixOutcome = null;
           mixlearn.record(o.choice, 'good');
-          this.logMix('good', `You kept ${quote(this.current)} after a ${o.choice.style === 'dropcut' ? 'drop cut' : 'smooth blend'}: learning for ${TEMPO_RANGES[o.choice.bucket]}`);
+          this.logMix('good', `You kept ${quote(this.current)} after a ${o.choice.style === 'dropcut' ? 'drop cut' : 'smooth blend'}: learning for ${mixlearn.describeBucket(o.choice.bucket)}`);
           return;
         }
         if (++checks > 30) { this.mixOutcome = null; return; }

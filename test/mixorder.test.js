@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempoFromText, tempoFromWaveform, energyShape, features, tempoFit, blendCost,
-  orderForMixing, pickNext, describeBlend } from '../src/js/mixorder.js';
+  orderForMixing, pickNext, describeBlend, genreFamily } from '../src/js/mixorder.js';
 
 function random(seed = 12345) {
   return () => {
@@ -310,4 +310,34 @@ test('describeBlend gives whole BPM labels, half time, jumps, and neutral unknow
   assert.deepEqual(describeBlend(song(122), song(150), { maxStretch: 0.25 }),
     { ok: true, text: '122 → 150 BPM' });
   assert.deepEqual(describeBlend(song(null), song(150)), { ok: true, text: 'tempo unknown' });
+});
+
+test('genreFamily sorts genres, tags and titles into coarse families', () => {
+  const cases = [
+    [{ genre: 'Dubstep' }, 'bass'], [{ genre: 'Drum & Bass' }, 'bass'], [{ genre: 'drum and bass' }, 'bass'],
+    [{ genre: 'Electronic', tag_list: 'riddim bass' }, 'bass'], [{ tag_list: '"future bass" jungle' }, 'bass'],
+    [{ genre: 'Hip-hop & Rap' }, 'hiphop'], [{ genre: 'Trap' }, 'hiphop'], [{ tag_list: 'boom bap rap' }, 'hiphop'],
+    [{ genre: 'House' }, 'dance'], [{ genre: 'Techno' }, 'dance'], [{ tag_list: 'psytrance goa' }, 'dance'],
+    [{ genre: 'Dance & EDM' }, 'dance'], [{ genre: 'Electronic' }, 'dance'], [{ genre: 'Electronic', tag_list: 'deep house' }, 'dance'],
+    [{ genre: 'Pop' }, 'other'], [{ genre: 'Rock', tag_list: 'indie' }, 'other'], [{ genre: 'Dancehall' }, 'other'],
+    [{ genre: 'Garage Rock' }, 'other'], [{ tag_list: 'acoustic folk' }, 'other'],
+    [{ genre: 'Something Unusual' }, 'other'],
+    [{}, 'unknown'], [null, 'unknown'], [{ genre: '', tag_list: 'remix cover' }, 'unknown']
+  ];
+  for (const [input, family] of cases) assert.equal(genreFamily(input), family, JSON.stringify(input));
+  // a specific style beats the general "electronic", and the genre field is read before the tags
+  assert.equal(genreFamily({ genre: 'Hip-hop', tag_list: 'house' }), 'hiphop');
+  assert.equal(genreFamily({ genre: 'Dance', tag_list: 'dubstep' }), 'bass');
+  // titles only count with unmistakable terms, and only when nothing else is known
+  assert.equal(genreFamily({ title: 'Heavy Dubstep Drop' }), 'bass');
+  assert.equal(genreFamily({ title: 'Bass Down Low' }), 'unknown');
+  assert.equal(genreFamily({ title: 'House of Cards' }), 'unknown');
+  assert.equal(genreFamily({ genre: 'Pop', title: 'Trap Queen' }), 'other');
+});
+
+test('genreFamily reads queue features as well as raw tracks', () => {
+  const track = { id: 1, genre: 'Techno', tag_list: 'dark "hard techno"' };
+  assert.equal(genreFamily(features(track)), 'dance');
+  assert.equal(genreFamily(features({ id: 2, genre: '', tag_list: 'dnb' })), 'bass');
+  assert.equal(genreFamily({ ...features({ id: 3 }), title: 'Dubstep mix' }), 'bass');
 });

@@ -8,6 +8,7 @@ import { getSleepTimer, formatRemaining } from './sleep.js';
 import { iconButton, likeButton, repostButton, avatar, addToPlaylistDialog, trackMenu, link, userHref, trackHref, emptyState, menu, transitionDialog, toast } from './ui.js';
 import { getCues, cueEvents, transitionFor } from './cues.js';
 import { formatCueTime } from './cue-time.js';
+import { createMixRate } from './mixrate.js';
 
 export function mountPlayerBar(root, { offline = false } = {}) {
   // the placeholder icon only shows in the side panel, when the track has no cover
@@ -90,7 +91,23 @@ export function mountPlayerBar(root, { offline = false } = {}) {
 
   const visualizer = createVisualizer();
   const pbText = h('div.pb-text', title, artist);
-  const pbLeft = h('div.pb-left', art, pbText, likeSlot, addBtn);
+  // thumbs up / down for the Auto mix transition that just happened (mixrate.js); hidden outside that window
+  const mixRateEl = h('div.pb-mixrate', { hidden: true, role: 'group', 'aria-label': 'Rate this transition' },
+    h('span.pb-mixrate-label', 'Rate the mix'),
+    iconButton('thumbsUp', 'Good transition', () => mixRate.rate('good'), 'pb-mixrate-btn'),
+    iconButton('thumbsDown', 'Bad transition', () => mixRate.rate('bad'), 'pb-mixrate-btn'));
+  const reduceMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || document.documentElement.hasAttribute('data-perf');
+  const mixRate = createMixRate(player, {
+    mount: () => { mixRateEl.hidden = false; },
+    reveal: () => mixRateEl.classList.add('show'),
+    conceal: () => {
+      // a click on a thumb removes it from the layout: keep keyboard focus on the page
+      if (mixRateEl.contains(document.activeElement)) title.focus({ preventScroll: true });
+      mixRateEl.classList.remove('show');
+    },
+    unmount: () => { mixRateEl.hidden = true; }
+  }, { reducedMotion: reduceMotion });
+  const pbLeft = h('div.pb-left', art, pbText, likeSlot, addBtn, mixRateEl);
   const controls = h('div.pb-controls',
     shuffleBtn,
     iconButton('prev', 'Previous (Ctrl+←)', () => player.prev(), 'pb-skip'),
@@ -141,9 +158,10 @@ export function mountPlayerBar(root, { offline = false } = {}) {
     slots.controls.append(controls);
     slots.volume.append(volIcon, volume);
     slots.buttons.append(speedBtn, eqBtn, sleepBtn, queueBtn);
+    mixRow.append(mixRateEl); // in the Auto mix strip, after the tempo and countdown
   };
   const dockBar = () => {
-    pbLeft.append(art, pbText, likeSlot, addBtn);
+    pbLeft.append(art, pbText, likeSlot, addBtn, mixRateEl);
     pbCenter.prepend(controls, progressRow);
     pbRight.prepend(moreBtn, speedBtn, eqBtn, sleepBtn, queueBtn, volIcon, volume);
   };
@@ -158,7 +176,7 @@ export function mountPlayerBar(root, { offline = false } = {}) {
     if (want === docked) { measureTop(); return; }
     // moving or hiding a focused control would drop keyboard focus: put it back afterwards
     const focused = document.activeElement;
-    const keepFocus = focused && focused !== document.body && [art, pbText, likeSlot, repostSlot, addBtn, moreBtn, controls, progressRow, volIcon, volume, speedBtn, eqBtn, sleepBtn, queueBtn].some(el => el.contains(focused));
+    const keepFocus = focused && focused !== document.body && [art, pbText, likeSlot, repostSlot, addBtn, moreBtn, controls, progressRow, volIcon, volume, speedBtn, eqBtn, sleepBtn, queueBtn, mixRateEl].some(el => el.contains(focused));
     docked = want;
     side.hidden = !docked;
     document.documentElement.toggleAttribute('data-side-player', docked);
