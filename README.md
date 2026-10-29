@@ -21,10 +21,12 @@ A sleek, themeable SoundCloud desktop client for Windows, macOS and Linux.
 
 **Listening**
 
-- **Auto mix.** DJ-style transitions, off by default (Settings → Auto mix). Quantm finds each song's tempo and beat, starts the next song on the beat, matches tempos (half and double time too), cuts the bass in and swaps it over one bar, then fades the old song out. Mixes last 16, 32 or 64 beats. Songs without a clear beat get a normal blend.
+- **Auto mix.** DJ-style transitions, off by default (Settings → Auto mix). Quantm finds each song's tempo and beat, starts the next song on the beat, matches tempos (half and double time too), and hands over the bass, mids and highs like a DJ with a mixer. Once a song has been heard, mixes start and end on whole phrases (8, 16 or 32 bars). Songs without a clear beat get a normal blend.
+- **Smarter endings.** Quantm also reads each song's key (clashing keys get a shorter blend), keeps two singers from overlapping, and when a song ends abruptly it loops the last clean bars or adds an echo so the next song can come in. These work best once Quantm has heard a song before.
+- **Genre-aware transitions.** Set Settings → Auto mix → Transition style to Auto and Quantm picks one to fit the pair: a quick cut for hip-hop, a double drop for drum and bass or dubstep, a slow filter fade for deep house and ambient, or a drop cut for energetic electronic songs. Smooth blend stays the default.
 - **Auto mix learns.** It remembers every song it plays (tempo, beat, where the drums come in, where the outro starts) so later mixes go over the real outro. It also learns your taste: keeping a song nudges future mixes toward that style, and the thumbs up or down that appears after a mix teaches it what you liked, separately for each genre family and tempo range. Reset it any time in Settings → Auto mix.
 - **Live Auto mix page.** Settings → Auto mix shows what it hears, the planned mix and a countdown, the beat lock in milliseconds, what it has learned per tempo range, and an activity feed.
-- **Mix order.** With Auto mix on, the shuffle button (or S) cycles off, shuffle and Mix order, which sorts your queue like a DJ set so each song blends into the next. Right-click a track and choose "Mix from here" to start a set from it. Autoplay picks the related songs that blend best, and the queue shows each blend ("122 → 124 BPM").
+- **Mix order.** With Auto mix on, the shuffle button (or S) cycles off, shuffle and Mix order, which sorts your queue like a DJ set so each song blends into the next, scoring tempo, key and how your past mixes went. Right-click a track and choose "Mix from here" to start a set from it. Autoplay picks the related songs that blend best, and the queue shows each blend ("122 → 124 BPM").
 - **Offline downloads.** Tracks whose artist allows downloads can be saved in the artist's original format and played without internet from Library → Offline. Other tracks can't be downloaded.
 - **Listening stats.** See your hours, plays, streaks, top tracks, artists and genres by week, month or year, earn badges, and save a shareable stats card as an image. Everything is counted on your computer and never uploaded.
 - **No ads, ever.** No audio ads, banners or promoted posts. Just your music.
@@ -37,6 +39,7 @@ A sleek, themeable SoundCloud desktop client for Windows, macOS and Linux.
 - **Artist profiles.** Popular tracks, tracks, albums, playlists, reposts, likes, followers and following, plus the artist's bio. Start a station of the artist's sound in one click.
 - **Track pages.** Full waveform, timed comments (post and delete your own), related tracks, and who liked or reposted. Click the cover art to see it at its original size.
 - **Quantm playlists.** Playlists saved on this computer with instant adds and removes, drag to reorder, and JSON export/import to move them between computers. Copy any SoundCloud playlist into Quantm with one click. Not synced to SoundCloud.
+- **Import from Spotify.** In Library → Quantm, paste the link to a public Spotify playlist (its first 100 songs) and Quantm saves it as a Quantm playlist. It can't play from Spotify: it finds each song on SoundCloud first, then Audius, then Bandcamp (Bandcamp ones only open on Bandcamp). Some SoundCloud copies are 30-second previews or copy-protected, and those are listed instead of added.
 - **Playlist editing.** Create, rename, make private or public, delete, drag to reorder, and remove tracks.
 - **Stations.** Start a station based on any track or artist.
 - **Notifications.** Likes, reposts, comments and new followers.
@@ -79,7 +82,7 @@ A sleek, themeable SoundCloud desktop client for Windows, macOS and Linux.
 
 - **Discord status.** Show "Listening to Quantm" with the song, artist, artwork and a progress bar, plus a "Listen on SoundCloud" button. While nothing is playing, your status stays up as "Playing Quantm" (Browsing, or Paused and the song) with a Get Quantm button; turn that off with Settings → Playback → Discord status while not playing. Needs the Discord desktop app, and you can turn it off.
 - **Crash logs.** If Quantm crashes, Settings → About → Open crash logs shows what happened. Logs stay on your computer, and you can attach crash.log to a GitHub issue.
-- **Performance page.** Live CPU and memory readouts, Performance mode (no blur or animations), visuals paused while minimized, and a hardware acceleration switch. Light enough to leave running while you game.
+- **Performance page.** Live CPU and memory readouts, Performance mode (no blur or animations, and on by itself while a game is fullscreen on Windows), visuals paused while minimized, and a hardware acceleration switch. Light enough to leave running while you game.
 - **Remembers your setup.** Your themes and settings carry over every time you restart, and survive updates: Quantm keeps a backup and restores anything that went missing.
 - **Installers for every platform.** Windows Setup (recommended) and a portable version, plus macOS `.dmg` for Apple Silicon and Intel, and Linux AppImage and `.deb` packages.
 

@@ -1,5 +1,19 @@
 **🚫 No ads**: no audio ads, banners or promoted tracks. Free and open source.
 
+## What's new in 1.2.3
+
+- **Import a Spotify playlist.** In Library → Quantm, press "Import from Spotify", paste the link to a public Spotify playlist, and Quantm saves it as a Quantm playlist on your computer. Quantm can't play from Spotify, so it looks for each song on SoundCloud first, then Audius, then Bandcamp. You get a summary of what it found where, and a Search button for the songs it couldn't find. Some limits: Spotify only shares the first 100 songs of a playlist, Bandcamp matches only open on Bandcamp (Quantm can't play them), and some SoundCloud copies are only 30-second previews or copy-protected, so those are listed separately instead of being added. Audius and Bandcamp songs get a small tag wherever they show up.
+- **Mix order sorts by how well songs blend.** Mix order (the shuffle button, or S, with Auto mix on) now scores each possible transition instead of just matching tempos. Songs in the same key blend better and clashing keys count against a pair, and so does a pair you rated badly before. "Mix from here" in the right-click menu and Autoplay pick songs the same way.
+- **Auto mix swaps bass, mids and highs.** A blend now hands over all three, like a DJ with a mixer: the new song's bass and highs stay out until it is time, the bass swaps halfway, and the two songs never play their mids (singing, lead sounds) at full level at the same time.
+- **Mixes land on the phrase.** Once Quantm has heard where a song's first drums come in, a mix starts on a whole phrase of the old song (8 bars) and lasts 8, 16 or 32 bars, and the new song enters on its own first bar, so the two line up the way a DJ counts them.
+- **Key matching.** Quantm now works out each song's key while it plays. When two songs clash, the blend is shorter and the bass and mids hand over earlier, so the clash is over quickly.
+- **No two singers at once.** If both songs have vocals where they would overlap, Quantm starts the blend later, or keeps the new song's mids down until the old singer is done.
+- **Better endings.** When a song stops dead or its drums stop early, Auto mix can repeat the last clean bars of the song to make room for the blend (up to four times), or add an echo to the last phrase and bring the next song in under it.
+- **Genre-aware Auto mix.** With Settings → Auto mix → Transition style set to Auto, Quantm picks a transition to fit the pair: a quick cut on the first beat for hip-hop, a double drop for drum and bass or dubstep when both songs' drops are known and the tempos match, a slow filter fade for deep house, ambient and other slow, quiet music, and a drop cut for energetic electronic songs with a clear drop. Everything else stays a smooth blend. Smooth blend is still the default. The vocal, key and echo handling above works best once Quantm has heard a song before; it learns each song the first time it plays.
+- **Performance mode while gaming.** On Windows, Quantm turns Performance mode on by itself while a game (or any other app) is fullscreen, and off again afterwards. Turn it off in Settings → Performance → Performance mode while gaming.
+- **Twin Deck shows the new transitions.** The Twin Deck theme pack now labels quick cuts, drop cuts, double drops and filter fades.
+- **Fixes.** SoundCloud's "prove you're human" check now opens in a small window and Quantm carries on once you pass it, instead of just failing. Plus a round of smaller bug fixes.
+
 ## What's new in 1.2.2
 
 - **Side player.** A new player position puts the whole player in a panel on the right: big artwork, the song and artist, the waveform, all the controls, likes, reposts, tags and the description. Turn it on in Settings → Appearance → Player position → Side. It works in every theme, and in windows narrower than 980 pixels the normal bar comes back.
