@@ -188,7 +188,7 @@ function commentsBlock(track, wave, context, isMine) {
     }
     await player.playTrack(track, context);
     if (player.audio.readyState >= 1) player.seek(seconds);
-    else player.audio.addEventListener('loadedmetadata', () => player.seek(seconds), { once: true });
+    else player.audio.addEventListener('loadedmetadata', () => { if (isThis()) player.seek(seconds); }, { once: true });
   };
 
   // comment box

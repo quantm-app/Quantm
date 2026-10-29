@@ -129,6 +129,20 @@ export function onNearBottom(scroller, fn, threshold = 600) {
   return () => scroller.removeEventListener('scroll', check);
 }
 
+/**
+ * Where a slider goes for a key press, or null when the key isn't one it uses: arrows move by step,
+ * PageUp / PageDown by page, Home / End to the ends. The result stays within min..max.
+ */
+export function sliderKey(key, value, min, max, step, page = step * 6) {
+  const moves = { ArrowLeft: -step, ArrowDown: -step, ArrowRight: step, ArrowUp: step, PageDown: -page, PageUp: page };
+  let next;
+  if (key === 'Home') next = min;
+  else if (key === 'End') next = max;
+  else if (Object.hasOwn(moves, key)) next = value + moves[key];
+  else return null;
+  return Math.max(min, Math.min(max, next));
+}
+
 export function debounce(fn, wait = 250) {
   let timer;
   return (...args) => {

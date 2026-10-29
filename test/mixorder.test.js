@@ -204,9 +204,10 @@ test('blend costs prioritize tempo and expose readable reasons', () => {
   assert.ok(tagged.cost < closeTempo.cost && tagged.reasons.includes('shares tags'));
   const loud = { ...current, energy: { overall: 1, intro: 0.8, outro: 1 } };
   const quiet = { ...current, energy: { overall: 0.1, intro: 0.1, outro: 0 } };
+  // energy isn't compared: a quiet song after a loud one costs the same as any other pair at this tempo
   const drop = blendCost(loud, quiet);
-  assert.ok(drop.cost > same.cost && drop.reasons.includes('energy drop'));
-  assert.ok(blendCost(quiet, loud).reasons.includes('energy rise'));
+  assert.equal(drop.cost, blendCost(current, current).cost);
+  assert.ok(!drop.reasons.some(reason => /energy/.test(reason)));
   assert.ok(blendCost(current, song(150), { maxStretch: 0.25 }).cost < far.cost);
   assert.deepEqual(blendCost(current, song(150)), far);
   for (const result of [same, closeTempo, half, unknown, far, tagged, drop]) assert.ok(result.cost >= 0);
@@ -340,4 +341,35 @@ test('genreFamily reads queue features as well as raw tracks', () => {
   assert.equal(genreFamily(features(track)), 'dance');
   assert.equal(genreFamily(features({ id: 2, genre: '', tag_list: 'dnb' })), 'bass');
   assert.equal(genreFamily({ ...features({ id: 3 }), title: 'Dubstep mix' }), 'bass');
+});
+
+test('mixability: a beat to the end and drums from the start sound better than a quiet outro into a slow intro', () => {
+  const base = { bpm: 124, bpmConfidence: 1, genre: '', tags: [] };
+  const clean = blendCost({ ...base, id: 1, structure: { beatToEnd: true } }, { ...base, id: 2, structure: { drumsIn: 0 } });
+  const plain = blendCost({ ...base, id: 1 }, { ...base, id: 2 });
+  const rough = blendCost({ ...base, id: 1, structure: { outroStart: 150, duration: 200 } }, { ...base, id: 2, structure: { drumsIn: 45 } });
+  assert.ok(clean.cost < plain.cost && plain.cost < rough.cost);
+  assert.ok(clean.reasons.includes('beat to the end') && clean.reasons.includes('drums from the start'));
+  assert.ok(rough.reasons.includes('long quiet outro') && rough.reasons.includes('slow intro'));
+  // features carries the structure from memory
+  const f = features({ id: 5, duration: 200000 }, { memory: { bpm: 124, confidence: 1, drumsIn: 0.5, beatToEnd: true, drop: { time: 60 } } });
+  assert.deepEqual(f.structure, { drumsIn: 0.5, beatToEnd: true, outroStart: null, drop: true, duration: 200 });
+  assert.equal(features({ id: 5 }, { memory: { bpm: 124, confidence: 1 } }).structure, undefined);
+});
+
+test('how transitions went steers the choice: a liked pair wins, a pair that went badly loses, songs and genres nudge', () => {
+  const song = (id, genre = 'house') => ({ id, bpm: 124, bpmConfidence: 1, genre, tags: [] });
+  const tally = { pairs: { '1>2': { good: 3, bad: 0 }, '1>3': { good: 0, bad: 2 } }, tracks: { 4: { good: 6, bad: 0 } }, families: {} };
+  const history = { pair: (a, b) => tally.pairs[`${a}>${b}`] || null, track: id => tally.tracks[id] || null, family: (a, b) => tally.families[`${a}>${b}`] || null };
+  const liked = blendCost(song(1), song(2), { history });
+  const bad = blendCost(song(1), song(3), { history });
+  const unknown = blendCost(song(1), song(9), { history });
+  const mixesWell = blendCost(song(1), song(4), { history });
+  assert.ok(liked.cost < mixesWell.cost && mixesWell.cost < unknown.cost && unknown.cost < bad.cost);
+  assert.ok(liked.reasons.includes('you liked this mix') && bad.reasons.includes('this mix went badly before'));
+  assert.deepEqual(blendCost(song(1), song(9)), blendCost(song(1), song(9), { history: null }));
+  tally.families['dance>bass'] = { good: 0, bad: 8 };
+  assert.ok(blendCost(song(1), song(9, 'dubstep'), { history }).cost > blendCost(song(1), song(9, 'dubstep')).cost);
+  // pickNext follows it
+  assert.deepEqual(pickNext(song(1), [song(3), song(9), song(2)], { history, random: () => 0 }), [2]);
 });

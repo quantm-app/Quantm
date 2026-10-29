@@ -41,6 +41,8 @@ function load() {
   } catch (e) {
     index = {};
   }
+  // valid JSON that isn't an index (null, a list, a number) would make every later load() throw
+  if (!index || typeof index !== 'object' || Array.isArray(index)) index = {};
   // forget entries whose file was deleted by hand
   for (const [id, entry] of Object.entries(index)) {
     if (!entry || !entry.file || !fs.existsSync(path.join(dir(), entry.file))) delete index[id];

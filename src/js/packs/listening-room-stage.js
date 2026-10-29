@@ -4,7 +4,7 @@ import { store, settings, safeParse } from '../store.js';
 import * as api from '../api.js';
 import { icon } from '../icons.js';
 import { motionAllowed } from '../audio-reactivity.js';
-import { button, iconButton, likeButton, addToPlaylistDialog, trackMenu, link, trackHref, userHref, toast, errorState, isLocked, openInSoundCloud } from '../ui.js';
+import { button, iconButton, likeButton, addToPlaylistDialog, trackMenu, link, trackHref, userHref, toast, errorState, isLocked, openInSoundCloud, openLabel, lockedHint } from '../ui.js';
 
 export function render(container) {
   container.classList.add('lr-stage');
@@ -156,10 +156,10 @@ export function render(container) {
       const locked = isLocked(track);
       const row = h('button.lr-queue-row', {
         onclick: () => locked ? openInSoundCloud(track) : player.jump(index), 'aria-current': index === player.index ? 'true' : null,
-        title: locked ? `Copy-protected by the label: open "${track.title}" in SoundCloud` : null
+        title: locked ? `${lockedHint(track)} (${track.title})` : null
       },
         h('span.lr-queue-number', locked ? icon('lock', 12) : String(index + 1)),
-        h('span.lr-queue-meta', h('span', track.title), h('span.muted', locked ? 'Open in SoundCloud' : track.user?.username || '')),
+        h('span.lr-queue-meta', h('span', track.title), h('span.muted', locked ? openLabel(track) : track.user?.username || '')),
         h('span.muted', duration(track.duration)));
       row.classList.toggle('current', index === player.index);
       queue.append(row);

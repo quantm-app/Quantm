@@ -33,6 +33,11 @@ export function createMixRate(player, view, { reducedMotion = () => false, frame
   if (player.mixRating) show();
   return {
     rate(outcome) { return player.rateMix(outcome); },
-    destroy() { off(); clearTimeout(hideTimer); },
+    destroy() {
+      off();
+      revealing++; // a queued frame must not reveal a control that is going away
+      // a fade-out that was running would never finish: take the control out of the layout now
+      if (hideTimer !== null) { clearTimeout(hideTimer); hideTimer = null; mounted = false; view.unmount(); }
+    },
   };
 }

@@ -6,6 +6,7 @@
 //            Per-day maps let the week / month / year views show real top tracks, artists and genres for
 //            that range. Days older than 400 days are pruned, and each day keeps at most 40 entries per map.
 //   tracks   id -> { plays, seconds, title, artist, artistId, genre, artwork, lastPlayed }  (top 2000 by plays)
+//            Audius / Bandcamp songs also keep { source, sourceId, duration } so an Audius one can be replayed
 //   artists  id -> { name, avatar, plays, seconds }                                           (top 1000 by plays)
 //   genres   lowercase name -> { name, plays, seconds }
 //   plays / seconds  all-time totals, so "All time" keeps counting after old days are pruned
@@ -24,6 +25,7 @@ export const MAX_ARTISTS = 1000;
 export const KEEP_DAYS = 400;
 export const DAY_ENTRIES = 40;
 export const PLAY_SECONDS = 30;
+const MAX_SOURCE_ID = 200;
 
 const DAY_MS = 86400000;
 const RANGE_DAYS = { week: 7, month: 30, year: 365 };
@@ -123,6 +125,16 @@ function dayEntry(data, ts) {
   return data.days[key] || (data.days[key] = { seconds: 0, plays: 0, tracks: {}, artists: {}, genres: {} });
 }
 
+/** What a stored Audius / Bandcamp song needs to be played again: { source, sourceId, duration } or null for SoundCloud */
+function externalFields(track) {
+  const source = track.source;
+  if (source !== 'audius' && source !== 'bandcamp') return null;
+  const sourceId = typeof track.sourceId === 'string' || typeof track.sourceId === 'number' ? String(track.sourceId) : '';
+  if (!sourceId || sourceId.length > MAX_SOURCE_ID) return null;
+  const duration = Number(track.duration);
+  return { source, sourceId, duration: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 0 };
+}
+
 function trackEntry(data, track, ts) {
   const id = String(track.id);
   if (!data.tracks[id]) {
@@ -138,7 +150,13 @@ function trackEntry(data, track, ts) {
       lastPlayed: ts
     };
   }
-  return data.tracks[id];
+  const entry = data.tracks[id];
+  // also fills in songs that were stored before these fields existed
+  if (!entry.sourceId) {
+    const external = externalFields(track);
+    if (external) Object.assign(entry, external);
+  }
+  return entry;
 }
 
 function artistEntry(data, track) {

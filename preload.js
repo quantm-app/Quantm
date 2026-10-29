@@ -11,9 +11,15 @@ contextBridge.exposeInMainWorld('native', {
     setManual: (token, clientId) => ipcRenderer.invoke('auth:setManual', { token, clientId })
   },
   api: (request) => ipcRenderer.invoke('api:request', request),
+  humanCheck: (url) => ipcRenderer.invoke('api:humanCheck', url),
   prefs: {
     load: () => ipcRenderer.sendSync('prefs:load'),
     save: (entries) => ipcRenderer.invoke('prefs:save', entries)
+  },
+  sources: {
+    spotifyPlaylist: (link) => ipcRenderer.invoke('sources:spotifyPlaylist', link),
+    audiusSearch: (query) => ipcRenderer.invoke('sources:audiusSearch', query),
+    bandcampSearch: (query) => ipcRenderer.invoke('sources:bandcampSearch', query)
   },
   json: (url) => ipcRenderer.invoke('net:json', url),
   image: (url) => ipcRenderer.invoke('net:image', url),
@@ -36,6 +42,8 @@ contextBridge.exposeInMainWorld('native', {
   performanceInfo: () => ipcRenderer.invoke('app:performanceInfo'),
   setHardwareAcceleration: (on) => ipcRenderer.invoke('app:setHardwareAcceleration', on),
   onVisibility: (fn) => ipcRenderer.on('window:visibility', (event, hidden) => fn(hidden)),
+  // a game or another app is fullscreen in front of Quantm (Windows)
+  onGaming: (fn) => ipcRenderer.on('window:gaming', (event, gaming) => fn(gaming)),
   // drop decoded images and other caches (used when the window is minimized)
   trimMemory: () => webFrame.clearCache(),
   offline: {

@@ -12,6 +12,8 @@ import * as theme from '../theme.js';
 import { packFor } from '../theme-packs.js';
 import * as mixmemory from '../mixmemory.js';
 import * as mixlearn from '../mixlearn.js';
+import * as mixpairs from '../mixpairs.js';
+import { GENRE_LABELS } from '../transitions.js';
 import * as look from '../appearance.js';
 import { pageHeader, button, toast, avatar, confirmDialog, promptDialog, removeAllDownloads } from '../ui.js';
 import { subscribeUpdates, performUpdate, updateStatusText } from '../updates.js';
@@ -502,12 +504,14 @@ function selectRow(title, desc, options, value, onChange) {
 }
 
 /** Picking Liquid Glass with an opaque window: offer the real see-through effect once */
-async function offerSeeThrough() {
-  const mode = await window.native.windowMode();
-  if (!mode.supported || mode.seeThrough || localStorage.getItem('quantm.offeredSeeThrough')) return;
-  localStorage.setItem('quantm.offeredSeeThrough', '1');
-  const ok = await confirmDialog('Make the window see-through?', 'Liquid Glass looks best when your desktop shows through it. Quantm will restart to turn this on. You can change it later in Settings → Appearance → Window.', 'Restart & turn on');
-  if (ok) window.native.setSeeThrough(true);
+export async function offerSeeThrough() {
+  try {
+    const mode = await window.native.windowMode();
+    if (!mode.supported || mode.seeThrough || localStorage.getItem('quantm.offeredSeeThrough')) return;
+    localStorage.setItem('quantm.offeredSeeThrough', '1');
+    const ok = await confirmDialog('Make the window see-through?', 'Liquid Glass looks best when your desktop shows through it. Quantm will restart to turn this on. You can change it later in Settings → Appearance → Window.', 'Restart & turn on');
+    if (ok) window.native.setSeeThrough(true);
+  } catch { /* an offer only: the theme is already applied, so a failed window query is not worth an error */ }
 }
 
 /** See-through window: needs a restart because a window can't become transparent later */
@@ -665,15 +669,17 @@ async function performanceTab(cleanups) {
     );
   };
   window.native.metrics();
-  setTimeout(refresh, 800);
+  const first = setTimeout(refresh, 800);
   const timer = setInterval(refresh, 2000);
-  cleanups.push(() => clearInterval(timer));
+  cleanups.push(() => { clearTimeout(first); clearInterval(timer); });
 
   return h('div',
     card('Resource usage', 'Everything Quantm is using right now, across all of its processes.', usage),
     card('Lighter on resources', 'Handy while gaming. Music keeps playing either way.',
       toggleRow('Performance mode', 'Turn off blur, animations and the visualizer. Glass themes become solid so text stays readable.', !!settings.performanceMode,
         (on) => saveSettings({ performanceMode: on })),
+      toggleRow('Performance mode while gaming', 'Turn it on by itself while a game (or any other app) is fullscreen, and off again afterwards.', settings.performanceWhileGaming !== false,
+        (on) => saveSettings({ performanceWhileGaming: on })),
       toggleRow('Pause visuals when minimized', 'Stop animations and drawing, and free cached images, while Quantm is minimized.', settings.pauseWhenHidden !== false,
         (on) => saveSettings({ pauseWhenHidden: on })),
       toggleRow('Hardware acceleration', 'Use the graphics card for drawing. Turning it off leaves your GPU to your games, but Quantm uses more memory (around 200 MB more). Quantm restarts to apply this.', info.hardwareAcceleration,
@@ -706,6 +712,7 @@ function autoMixLearning() {
     if (!ok) return;
     mixmemory.reset();
     mixlearn.reset();
+    mixpairs.reset();
     show();
     toast('Auto mix starts learning again');
   }, 'btn-outline');
@@ -715,6 +722,18 @@ function autoMixLearning() {
 // ---------------------------------------------------------------------------
 // Auto mix tab: what it's doing right now and what it has learned, live
 // ---------------------------------------------------------------------------
+
+/** Name of the style a mix or plan uses, for the live rows */
+const styleName = (style, genre) => GENRE_LABELS[genre] || (style === 'dropcut' ? 'Drop cut' : 'Smooth blend');
+
+/** How the next song's key relates to the playing one's, for the up-next line (the codes are Camelot wheel keys) */
+const KEY_RELATIONS = {
+  same: k => `same key (${k.from})`,
+  relative: k => `relative key (${k.from} → ${k.to})`,
+  neighbor: k => `neighboring key (${k.from} → ${k.to})`,
+  'energy-boost': k => `key lifts (${k.from} → ${k.to})`,
+  clash: k => `keys clash (${k.from} → ${k.to})`
+};
 
 const AUTOMIX_RANGES = [
   ['slow', 'Under 100 BPM'], ['mid', '100-130 BPM'], ['fast', '130-160 BPM'], ['faster', '160+ BPM'], ['nobeat', 'No clear beat']
@@ -741,6 +760,8 @@ async function autoMixTab(cleanups) {
       const source = s.live ? (s.memory && s.memory.bpm ? 'heard now, tempo from memory' : 'heard now') : s.structure.grid ? 'from memory' : '';
       rows.push(row('Tempo', grid ? `${grid.bpm.toFixed(1)} BPM (${source}, confidence ${pct(grid.confidence)})`
         : s.heard ? `listening for the beat (${s.heard.toFixed(0)} s heard)` : 'listens near the end of the song'));
+      if (s.key) rows.push(row('Key', `${s.key.name} (${s.key.camelot})  ·  ${pct(s.key.confidence)} sure` + (s.key.heard ? '' : ', from memory')));
+      else if (s.listening) rows.push(row('Key', 'listening for the key'));
       const m = s.memory;
       const parts = [];
       if (m) parts.push(`heard ${m.plays} time${m.plays === 1 ? '' : 's'}`);
@@ -750,17 +771,23 @@ async function autoMixTab(cleanups) {
       if (m?.drop) parts.push(`drop at ${clock(m.drop.time)}, confidence ${pct(m.drop.confidence)}`);
       rows.push(row('Memory', parts.length ? parts.join('  ·  ') + (m ? '' : '  (guessed from the waveform)') : 'first time hearing this song'));
       if (s.plan && !s.mix) {
-        if (s.plan.reason) rows.push(row('Transition style', `${s.plan.style === 'dropcut' ? 'Drop cut' : 'Smooth blend'} · ${s.plan.reason}`));
+        if (s.plan.reason) rows.push(row('Transition style', `${styleName(s.plan.style, s.plan.genre)} · ${s.plan.reason}`));
         const p = s.plan.choice ? s.plan.choice.params : null;
         const when = s.mixIn != null ? (s.mixIn > 0 ? 'in ' + clock(s.mixIn) : 'starting now') : 'near the end';
         rows.push(row('Next mix', `${when}  ·  ${(s.plan.span / (player.audio.playbackRate || 1)).toFixed(1)} s` +
           (p ? `  ·  trying ${pct(p.length)} length, ${pct(p.dj)} DJ blend, up to ${pct(p.stretch, 1)} tempo stretch` : '')));
+        // the song's beat stops before its end, or two singers would overlap: what the plan does about it
+        if (s.plan.ending?.kind === 'loop') rows.push(row('Ending', `loops its last ${s.plan.ending.plan.n === 1 ? 'bar' : s.plan.ending.plan.n + ' bars'} to make room for the blend`));
+        else if (s.plan.ending?.kind === 'echo-out') rows.push(row('Ending', 'echo-out: the song ends abruptly, so an echo carries it out'));
+        if (s.plan.vocals?.shift != null) rows.push(row('Vocals', `the blend starts ${(s.plan.vocals.shift / (player.audio.playbackRate || 1)).toFixed(1)} s later, so the two singers don't overlap`));
+        else if (s.plan.vocals?.hold) rows.push(row('Vocals', 'the incoming mids are held back until the outgoing singer is done'));
       } else if (!s.mix) rows.push(row('Next mix', 'planned about 40 s before the end'));
       if (s.upNext && !s.mix) {
         const u = s.upNext;
         const sources = { memory: 'from memory', soundcloud: 'from SoundCloud', title: 'from its title', tags: 'from its tags', description: 'from its description', waveform: 'rough, from its waveform' };
         rows.push(row('Up next', u.track.title + (u.bpm ? `  ·  ${Math.round(u.bpm)} BPM (${sources[u.source] || 'guessed'})` : '  ·  tempo unknown') +
-          (u.reasons && u.reasons.length ? '  ·  ' + u.reasons.slice(0, 3).join(', ') : '') +
+          (u.reasons && u.reasons.length ? '  ·  ' + u.reasons.filter(r => !/^key/.test(r)).slice(0, 3).join(', ') : '') +
+          (KEY_RELATIONS[u.key?.relation] ? '  ·  ' + KEY_RELATIONS[u.key.relation](u.key) : '') +
           (s.shuffleMode === 'mix' ? '  ·  picked by Mix order' : '')));
       }
       if (s.preroll) {
@@ -769,7 +796,7 @@ async function autoMixTab(cleanups) {
           (p.startAt > 0 ? `, starts at ${clock(p.startAt)}` : '')));
       }
       if (s.mix) {
-        rows.push(row('Transition style', `${s.mix.style === 'dropcut' ? 'Drop cut' : 'Smooth blend'}${s.mix.phase ? ' · ' + s.mix.phase : ''}${s.mix.reason ? ' · ' + s.mix.reason : ''}`));
+        rows.push(row('Transition style', `${styleName(s.mix.style, s.mix.genre)}${s.mix.phase ? ' · ' + s.mix.phase : ''}${s.mix.reason ? ' · ' + s.mix.reason : ''}`));
         const bar = h('span.automix-bar', h('span', { style: { width: pct(s.mix.progress) } }));
         rows.push(row('Mixing', h('span', `${s.mix.from.title} → ${s.mix.to.title}  ·  ${pct(s.mix.progress)} of ${s.mix.seconds.toFixed(1)} s` +
           (s.mix.bass ? (s.mix.progress < 0.5 ? '  ·  bass swaps at 50%' : '  ·  bass swapped') : ''), bar)));
@@ -828,7 +855,7 @@ async function autoMixTab(cleanups) {
   return h('div',
     card('Auto mix', 'DJ-style transitions that learn from every song and every rating. Updates live while you listen.',
       toggleRow('Auto mix', 'Beat-matched mixes between songs. Also in Playback → Crossfade.', settings.autoMix === true, (on) => saveSettings({ autoMix: on })),
-      selectRow('Transition style', 'Smooth blend mixes over the end of each song. Drop cut skips to the next song’s drop; Auto uses it for energetic electronic pairs with a clear drop.',
+      selectRow('Transition style', 'Smooth blend mixes over the end of each song. Drop cut skips to the next song’s drop. Auto picks what suits the music: a quick cut for hip-hop, a double drop for drum and bass or dubstep, a slow filter fade for deep house and ambient, and a drop cut for energetic electronic pairs with a clear drop.',
         [{ id: 'blend', label: 'Smooth blend (default)' }, { id: 'auto', label: 'Auto' }, { id: 'dropcut', label: 'Drop cut' }],
         settings.transitionStyle || 'blend', value => saveSettings({ transitionStyle: value, transitionStyleChosen: true })),
       now),

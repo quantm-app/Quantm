@@ -30,8 +30,14 @@ function home(container, ctx, motion) {
   const position = h('p.sr-position');
   const time = h('span.sr-time');
   const play = h('button.sr-play', { type: 'button', onclick: () => player.toggle() });
-  const seek = h('input.sr-seek', { type: 'range', min: 0, max: 1, step: 0.1,
-    'aria-label': 'Seek in current track', oninput: () => player.seek(Number(seek.value)) });
+  const seek = h('input.sr-seek', { type: 'range', min: 0, max: 1, step: 1,
+    'aria-label': 'Seek in current track', oninput: () => player.seek(Number(seek.value)),
+    // arrow keys jump 5 seconds, like the other themes' seek bars
+    onkeydown: e => {
+      if (!['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp'].includes(e.key)) return;
+      e.preventDefault(); e.stopPropagation();
+      player.seekBy(['ArrowLeft', 'ArrowDown'].includes(e.key) ? -5 : 5);
+    } });
   const line = junction();
   const mixFrom = h('span');
   const mixTo = h('span');
@@ -102,6 +108,7 @@ function home(container, ctx, motion) {
     seek.max = String(length || 1);
     seek.value = String(Math.min(player.audio.currentTime || 0, length));
     seek.disabled = !length;
+    seek.setAttribute('aria-valuetext', `${duration((player.audio.currentTime || 0) * 1000)} of ${duration(length * 1000)}`);
     time.textContent = `${duration((player.audio.currentTime || 0) * 1000)} / ${duration(length * 1000)}`;
     if (lastCurrent !== player.index) {
       rows[lastCurrent]?.classList.remove('current');

@@ -20,7 +20,7 @@ module.exports = [
     languageOptions: { sourceType: 'module', globals: { ...globals.browser, Hls: 'readonly' } }
   },
   {
-    files: ['main.js', 'preload.js', 'updater.js', 'offline.js', 'crashlog.js', 'window-snap.js', 'discord.js', 'eslint.config.js', '.github/scripts/**/*.js'],
+    files: ['main.js', 'preload.js', 'updater.js', 'offline.js', 'crashlog.js', 'import-sources.js', 'window-snap.js', 'discord.js', 'eslint.config.js', '.github/scripts/**/*.js'],
     languageOptions: { sourceType: 'commonjs', globals: globals.node }
   },
   {

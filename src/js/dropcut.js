@@ -1,11 +1,11 @@
 // Drop cuts use media times for planning and AudioContext times for every audible edge.
 // The outgoing roll needs only modest tempo/phase confidence. The incoming
 // phrase has already passed the stricter beat and bass-return confirmation.
-const confident = grid => grid?.confidence >= 0.25 && grid.period > 0 && Number.isFinite(grid.offset);
+export const confident = grid => grid?.confidence >= 0.25 && grid.period > 0 && Number.isFinite(grid.offset);
 const stamp = time => `${Math.floor(time / 60)}:${String(Math.floor(time % 60)).padStart(2, '0')}`;
 
 /** Only the incoming drop must be confirmed. The outgoing grid enables the optional roll. */
-export function planStyle({ style = 'auto', pair, drop, gridOut, match, features = [], rejected = false, ready = true }) {
+export function planStyle({ style = 'auto', pair, drop, gridOut, match, features = [], rejected = false, ready = true, clash = false }) {
   const wanted = ['auto', 'blend', 'dropcut'].includes(pair?.style) ? pair.style : style;
   const blend = reason => ({ style: 'blend', reason: `${reason}: smooth blend` });
   if (wanted === 'blend') return blend('Smooth blend selected');
@@ -13,7 +13,9 @@ export function planStyle({ style = 'auto', pair, drop, gridOut, match, features
   if (!ready) return blend('Drop audio not ready in time');
   if (wanted !== 'dropcut') {
     if (rejected) return blend('Recent drop cuts skipped at this tempo');
-    const suitable = features.length === 2 && features.every(f => {
+    // keys that clash are best not blended at all: a drop cut hides it, so Auto takes one whenever the pair
+    // has a confirmed drop and the song is ready, whatever the genre or energy
+    const suitable = clash || features.length === 2 && features.every(f => {
       const tags = [f?.genre, f?.title, ...(f?.tags || [])].join(' ');
       return /electro|dance|house|techno|trance|dubstep|ridd?im|riddm|trap|festival|big.?room|bass|dnb|drum.*bass|hyperpop|hardstyle|edm|club|rave/i.test(tags) &&
         (!f.energy || f.energy.overall >= 0.45);
@@ -21,7 +23,7 @@ export function planStyle({ style = 'auto', pair, drop, gridOut, match, features
     if (!suitable) return blend('Energy or genre favors a blend');
   }
   const variant = confident(gridOut || match?.gridOut) ? 'roll' : 'echo';
-  return { style: 'dropcut', variant, reason: `Drop at ${stamp(drop.time)}, confidence ${drop.confidence.toFixed(2)}; ${variant === 'roll' ? 'loop roll + high-pass + echo' : 'high-pass + echo (weak outgoing grid, no loop roll)'}`, drop };
+  return { style: 'dropcut', variant, reason: `${clash && wanted !== 'dropcut' ? 'Keys clash, so a drop cut. ' : ''}Drop at ${stamp(drop.time)}, confidence ${drop.confidence.toFixed(2)}; ${variant === 'roll' ? 'loop roll + high-pass + echo' : 'high-pass + echo (weak outgoing grid, no loop roll)'}`, drop };
 }
 
 /** End on a phrase; a mix-out remains the build's start. Prefer the remembered outro. */
@@ -42,7 +44,7 @@ export function buildWindow(grid, duration, { out = null, outroStart = null } = 
 
 /** Prefer eight bars on the planned phrase, then later phrases/bars or four/two bars. */
 export function futureWindow(grid, duration, { now = 0, rate = 1, dropTime, ratio = 1,
-  out = null, outroStart = null, variant = 'roll', margin = 0.3 } = {}) {
+  out = null, outroStart = null, variant = 'roll', margin = 0.3, buildBeats = null } = {}) {
   if (!(grid?.period > 0) || ![duration, now, rate, dropTime, ratio].every(Number.isFinite) || rate <= 0 || ratio <= 0) return null;
   const beat = grid.period, origin = grid.downbeat ?? grid.offset;
   const end = duration - Math.max(beat, 0.5 * rate);
@@ -50,7 +52,8 @@ export function futureWindow(grid, duration, { now = 0, rate = 1, dropTime, rati
     buildWindow(grid, end + beat, { out, outroStart });
   const firstCut = preferred?.cut ?? origin + Math.floor((end - origin) / (32 * beat)) * 32 * beat;
   const preferredLength = preferred ? preferred.cut - preferred.build : 32 * beat;
-  const lengths = [...new Set([preferredLength, ...[32, 16, 8].map(n => n * beat)])]
+  // the quick cut asks for a build of exactly this many beats; otherwise prefer eight bars, then four or two
+  const lengths = buildBeats ? [buildBeats * beat] : [...new Set([preferredLength, ...[32, 16, 8].map(n => n * beat)])]
     .filter(length => length >= 8 * beat - 1e-8 && length <= Math.min(32 * beat, preferredLength) + 1e-8);
   for (const length of lengths) {
     const room = dropTime / ratio - length;
@@ -66,13 +69,22 @@ export function futureWindow(grid, duration, { now = 0, rate = 1, dropTime, rati
   return null;
 }
 
-/** Accelerating 1, 1/2, 1/4 and 1/8 beat slices, then a 1/4-beat breath. */
-export function rollSchedule(start, beat, beats = 32, variant = 'roll') {
-  if (![start, beat, beats].every(Number.isFinite) || start < 0 || beat <= 0 || beats < 8 - 1e-8 || beats > 32 + 1e-8) return null;
-  beats = Math.max(8, Math.min(32, beats));
+/**
+ * Accelerating 1, 1/2, 1/4 and 1/8 beat slices, then a 1/4-beat breath.
+ * options (the quick cut; none = the Drop cut): breath (seconds of silence before the drop),
+ * stutter: false (no loop roll), echo: false (no echo), minBeats (shortest build, default 8),
+ * kill: { style: 'none' } for no high-pass sweep (the default sweeps to 2400 Hz).
+ */
+export function rollSchedule(start, beat, beats = 32, variant = 'roll', options = {}) {
+  const { breath = beat / 4, minBeats = 8, kill = null } = options;
+  if (![start, beat, beats, breath].every(Number.isFinite) || start < 0 || beat <= 0 || breath < 0 || beats < minBeats - 1e-8 || beats > 32 + 1e-8) return null;
+  beats = Math.max(minBeats, Math.min(32, beats));
+  if (breath >= beats * beat) return null;
   const drop = start + beats * beat;
-  const cut = drop - beat / 4;
+  const cut = drop - breath;
   const rollBeats = beats >= 24 ? 16 : beats >= 16 ? 8 : 4;
+  // without a loop roll the dry song plays to the cut, like the echo variant
+  if (options.stutter === false) variant = 'echo';
   const stages = (variant === 'echo' ? [] : [1, 0.5, 0.25, 0.125]).map((fraction, i) => {
     const at = drop - (rollBeats - i * rollBeats / 4) * beat;
     const end = i === 3 ? cut : at + rollBeats / 4 * beat;
@@ -80,7 +92,10 @@ export function rollSchedule(start, beat, beats = 32, variant = 'roll') {
     for (let t = at; t < end - 1e-8; t += fraction * beat) repeats.push(t);
     return { fraction, at, end, capture: at - fraction * beat, delay: fraction * beat, repeats };
   });
-  return { start, beat, drop, cut, roll: stages[0]?.at ?? drop - 4 * beat, stages, end: drop + beat * 2, variant };
+  const schedule = { start, beat, drop, cut, roll: stages[0]?.at ?? drop - 4 * beat, stages, end: drop + beat * 2, variant };
+  if (options.echo === false) schedule.echo = false;
+  if (kill?.style === 'none') schedule.kill = { style: 'none' };
+  return schedule;
 }
 
 export function dropPhase(schedule, now) {
@@ -110,7 +125,7 @@ export class DropCutEffect {
       highpass.Q.value = 1.2;
       highpass.frequency.value = 0;
       highpass.frequency.setValueAtTime(25, schedule.start);
-      highpass.frequency.exponentialRampToValueAtTime(2400, schedule.cut);
+      if (schedule.kill?.style !== 'none') highpass.frequency.exponentialRampToValueAtTime(2400, schedule.cut);
       this.input.connect(dry).connect(highpass).connect(destination);
       const dryEnd = schedule.variant === 'echo' ? schedule.cut : schedule.roll;
       dry.gain.setValueAtTime(1, dryEnd - 0.002);
@@ -125,11 +140,12 @@ export class DropCutEffect {
       echoFilter.frequency.value = 700;
       echo.connect(echoFilter).connect(feedback).connect(echo);
       echo.connect(wet).connect(highpass);
-      gate(wet.gain, schedule.roll, schedule.end, 0.3);
+      const echoLevel = schedule.echo === false ? 0 : 1; // a cut without an echo
+      gate(wet.gain, schedule.roll, schedule.end, 0.3 * echoLevel);
       if (schedule.variant === 'echo') {
         const send = gain(0);
         this.input.connect(send).connect(echo);
-        gate(send.gain, schedule.roll, schedule.cut, 0.6);
+        gate(send.gain, schedule.roll, schedule.cut, 0.6 * echoLevel);
       }
       for (const stage of schedule.stages) {
         const capture = gain(0), delay = node('createDelay'), loop = gain(0), output = gain(0);

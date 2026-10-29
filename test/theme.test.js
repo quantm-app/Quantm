@@ -32,6 +32,8 @@ test('theme import/export preserves custom colors, radius and supported style', 
 test('theme import rejects invalid input and defaults invalid slots', () => {
   assert.throws(() => importTheme('not json'), SyntaxError);
   assert.throws(() => importTheme('{}'), /Not a Quantm theme/);
+  assert.throws(() => importTheme('{"colors":null}'), /Not a Quantm theme/);
+  assert.throws(() => importTheme('null'), /Not a Quantm theme/);
   const imported = importTheme(JSON.stringify({ colors: { accent: 'red', text: '#abcdef', unknown: '#123456' }, style: 'unknown' }));
   assert.equal(imported.colors.accent, DEFAULT_THEME.colors.accent);
   assert.equal(imported.colors.text, '#abcdef');

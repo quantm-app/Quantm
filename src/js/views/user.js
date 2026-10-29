@@ -76,15 +76,20 @@ function profileHero(user, playContext) {
 
   // "Play" starts their popular tracks (or latest uploads when they have none)
   let queue = null;
+  let fetching = false;
   const play = async () => {
     if (player.context && player.context.href === playContext.href && player.current) return player.toggle();
+    if (fetching) return; // a second click while the songs are still loading
     if (!queue) {
+      fetching = true;
       try {
         let list = await api.userTopTracks(user.id).next();
         if (!list.length) list = await api.userTracks(user.id).next();
         queue = list.filter(t => t.kind === 'track');
       } catch (error) {
         return toast('Couldn\'t load tracks', 'error');
+      } finally {
+        fetching = false;
       }
     }
     if (!queue.length) return toast(`${user.username} has no tracks to play`);

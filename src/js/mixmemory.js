@@ -1,4 +1,6 @@
 import { analyze, detectDrop, orientGrid } from './beats.js';
+import { mergeKey } from './keys.js';
+import { normalizeVocals, mergeVocals } from './vocals.js';
 
 const KEY = 'quantm.mixmemory';
 const LIMIT = 3000;
@@ -327,6 +329,19 @@ function idFor(trackId) {
   return typeof trackId === 'string' && trackId.trim() && trackId.length <= 256 ? trackId : null;
 }
 
+// A remembered key is { tonic, mode, confidence, chroma }: the 12 pitch-class energies are kept so a later
+// play can refine the key. Entries from before key detection have none.
+function keyFor(value) {
+  if (!value || !Number.isInteger(value.tonic) || value.tonic < 0 || value.tonic > 11 ||
+      (value.mode !== 'major' && value.mode !== 'minor')) return null;
+  const chroma = Array.isArray(value.chroma) && value.chroma.length === 12 && value.chroma.every(v => Number.isFinite(v) && v >= 0) ?
+    value.chroma.map(v => round(v, 10000)) : null;
+  return { tonic: value.tonic, mode: value.mode, confidence: Number.isFinite(value.confidence) ? round(clamp(value.confidence), 100) : 0, ...(chroma ? { chroma } : {}) };
+}
+
+// keys.js speaks { key: { tonic, mode }, confidence, chroma }: this converts a remembered key (or null) to that
+export const keyEstimate = stored => stored && { key: { tonic: stored.tonic, mode: stored.mode }, confidence: stored.confidence, chroma: stored.chroma };
+
 function entryFor(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || !(Number.isFinite(value.plays) && value.plays >= 0)) return null;
   const grid = validGrid(value) ? value : null;
@@ -342,6 +357,9 @@ function entryFor(value) {
     drumsIn: time(value.drumsIn) ? round(value.drumsIn, 10) : null,
     outroStart: time(value.outroStart) ? round(value.outroStart, 10) : null,
     beatToEnd: value.beatToEnd === true,
+    key: keyFor(value.key),
+    // where the singing is in the first and last minute (vocals.js); entries from before it have none
+    vocals: normalizeVocals(value.vocals),
     plays: positive(value.plays) ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value.plays)) : 0,
     updated: time(value.updated) ? value.updated : 0
   };
@@ -432,8 +450,13 @@ export function learn(trackId, summary, opts = {}) {
       Math.abs(summary.outroStart - old.outroStart) <= 2 || heard > previousHeard)) beatToEnd = false;
   const drop = time(summary.drop?.time) && positive(summary.drop?.confidence) &&
     (!old?.drop || summary.drop.confidence >= old.drop.confidence) ? summary.drop : old?.drop;
+  // summary.key is keys.js's estimate with its chroma; it refines what earlier plays found
+  const merged = summary.key ? mergeKey(keyEstimate(old?.key), summary.key) : null;
+  const key = merged ? { ...merged.key, confidence: merged.confidence, chroma: merged.chroma } : old?.key;
+  // a play's vocal timeline refines what earlier plays heard (the old counts for the plays so far, capped)
+  const vocals = summary.vocals ? mergeVocals(old?.vocals, summary.vocals, Math.min(3, Math.max(1, old?.plays || 0))) : old?.vocals;
   const entry = entryFor({ ...grid, downbeat: old?.downbeat ?? summary.grid?.downbeat, drop,
-    drumsIn: boundary('drumsIn'), outroStart, beatToEnd,
+    drumsIn: boundary('drumsIn'), outroStart, beatToEnd, key, vocals,
     plays: (old?.plays || 0) + 1, updated: Date.now() });
   entries[id] = { ...entry, heard: round(Math.max(heard, previousHeard), 10) };
   const ids = Object.keys(entries).sort((a, b) => entries[b].updated - entries[a].updated);

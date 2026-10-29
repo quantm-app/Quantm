@@ -8,6 +8,7 @@ const discord = require('./discord');
 const updates = require('./updater');
 const offline = require('./offline');
 const crashlog = require('./crashlog');
+const importSources = require('./import-sources');
 
 // downloaded tracks are served to the page as quantm-offline://...; must be set up before ready
 offline.registerScheme();
@@ -181,6 +182,124 @@ function validApiRequest(request) {
   return true;
 }
 
+// SoundCloud's bot protection (DataDome) sometimes answers a request with a "prove you're human"
+// page instead of the result. Quantm shows that page to the user, who completes it themselves; the
+// clearance cookie it sets is then sent with later requests, exactly like in a browser.
+const CHECK_PARTITION = 'persist:soundcloud-check';
+let checkWindow = null;
+
+/** The human-check page URL in a blocked response, or null (https captcha-delivery.com only) */
+function humanCheckUrl(data) {
+  const raw = data && typeof data === 'object' ? data.url : null;
+  try {
+    const url = new URL(String(raw));
+    return url.protocol === 'https:' && /(^|\.)captcha-delivery\.com$/.test(url.hostname) ? url.toString() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function clearanceCookie() {
+  try {
+    const [cookie] = await session.fromPartition(CHECK_PARTITION).cookies.get({ url: 'https://api-v2.soundcloud.com/', name: 'datadome' });
+    return cookie ? cookie.value : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** "datadome=VALUE; Max-Age=...; Domain=.soundcloud.com; ..." from the check's answer -> cookie details */
+function clearanceFrom(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { return null; }
+  const header = data && typeof data.cookie === 'string' ? data.cookie : '';
+  const match = /^datadome=([^;\s]+)/.exec(header);
+  if (!match) return null;
+  const maxAge = Number((/max-age=(\d+)/i.exec(header) || [])[1]) || 365 * 24 * 3600;
+  return { value: match[1], expirationDate: Math.floor(Date.now() / 1000) + maxAge };
+}
+
+/** Steps of the check, without any cookie values, for diagnosing a check that doesn't finish */
+function logCheck(message) {
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'human-check.log'), new Date().toISOString() + ' ' + message + '\n');
+  } catch (e) { /* logging is best effort */ }
+}
+
+/** Show SoundCloud's human check; resolves true once the user has passed it */
+function openHumanCheck(url) {
+  if (checkWindow) {
+    checkWindow.focus();
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    const checkSession = session.fromPartition(CHECK_PARTITION);
+    let done = false;
+    const finish = (passed) => {
+      if (done) return;
+      done = true;
+      checkSession.cookies.removeListener('changed', onCookie);
+      if (checkWindow && !checkWindow.isDestroyed()) checkWindow.close();
+      checkWindow = null;
+      resolve(passed);
+    };
+    const onCookie = (event, cookie, cause, removed) => {
+      if (!removed && cookie.name === 'datadome' && /(^|\.)soundcloud\.com$/.test(cookie.domain.replace(/^\./, ''))) {
+        logCheck('clearance cookie stored');
+        setTimeout(() => finish(true), 600);
+      }
+    };
+    checkSession.cookies.on('changed', onCookie);
+    checkWindow = new BrowserWindow({
+      width: 460, height: 620, title: 'SoundCloud check', parent: mainWindow || undefined, modal: !!mainWindow,
+      autoHideMenuBar: true, backgroundColor: '#ffffff',
+      webPreferences: { partition: CHECK_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false }
+    });
+    checkWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    checkWindow.webContents.on('will-navigate', (event, target) => {
+      if (!/^https:\/\//.test(target)) event.preventDefault();
+    });
+    checkWindow.on('closed', () => { logCheck('window closed'); finish(false); });
+
+    // On soundcloud.com the check runs inside SoundCloud's page and hands the clearance to it.
+    // Here it is the whole window, so read its answer when the user passes and store the clearance
+    // for soundcloud.com ourselves.
+    const watched = new Set();
+    const dbg = checkWindow.webContents.debugger;
+    try {
+      dbg.attach('1.3');
+      dbg.sendCommand('Network.enable').catch(() => {});
+    } catch (e) {
+      logCheck('could not watch the check: ' + e.message);
+    }
+    dbg.on('message', async (event, method, params) => {
+      if (method === 'Network.responseReceived') {
+        const responseUrl = params.response && params.response.url || '';
+        if (/^https:\/\/[^/]*captcha-delivery\.com\//.test(responseUrl)) {
+          logCheck('response ' + params.response.status + ' ' + responseUrl.split('?')[0] + ' ' + (params.response.mimeType || ''));
+          if (/json|text\/plain/.test(params.response.mimeType || '')) watched.add(params.requestId);
+        }
+      } else if (method === 'Network.loadingFinished' && watched.has(params.requestId)) {
+        watched.delete(params.requestId);
+        try {
+          const { body, base64Encoded } = await dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId });
+          const clearance = clearanceFrom(base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body);
+          if (!clearance) return;
+          logCheck('check passed, clearance received');
+          await checkSession.cookies.set({
+            url: 'https://soundcloud.com/', name: 'datadome', value: clearance.value, domain: '.soundcloud.com',
+            path: '/', secure: true, sameSite: 'lax', expirationDate: clearance.expirationDate
+          });
+        } catch (e) {
+          logCheck('could not read the check answer: ' + e.message);
+        }
+      }
+    });
+    logCheck('check opened');
+    checkWindow.loadURL(url);
+  });
+}
+
 async function apiRequest({ method = 'GET', resource, params, body }, retried = false) {
   if (!auth) return { ok: false, status: 401, data: { error: 'not_logged_in' } };
 
@@ -190,6 +309,7 @@ async function apiRequest({ method = 'GET', resource, params, body }, retried = 
     return { ok: false, status: 400, data: { error: 'blocked_host' } };
   }
 
+  const clearance = await clearanceCookie();
   let response;
   try {
     response = await net.fetch(url.toString(), {
@@ -199,7 +319,7 @@ async function apiRequest({ method = 'GET', resource, params, body }, retried = 
         Accept: 'application/json',
         Origin: 'https://soundcloud.com',
         Referer: 'https://soundcloud.com/'
-      }, body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      }, body !== undefined ? { 'Content-Type': 'application/json' } : {}, clearance ? { Cookie: 'datadome=' + clearance } : {}),
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(API_TIMEOUT)
     });
@@ -208,6 +328,14 @@ async function apiRequest({ method = 'GET', resource, params, body }, retried = 
     // the first attempt may have reached SoundCloud (a duplicate comment or playlist).
     if (!retried && SAFE_METHODS.has(method)) return apiRequest({ method, resource, params, body }, true);
     return { ok: false, status: 0, data: { error: 'network', message: error.message, uncertain: !SAFE_METHODS.has(method) } };
+  }
+
+  // SoundCloud wants the user to prove they're human: the renderer shows the check and retries
+  if (response.status === 403) {
+    let blocked = null;
+    try { blocked = JSON.parse(await response.clone().text()); } catch (e) { /* not the check page */ }
+    const checkUrl = humanCheckUrl(blocked);
+    if (checkUrl) return { ok: false, status: 403, data: { error: 'human_check', url: checkUrl } };
   }
 
   // a stale client_id gives 401/403 even with a valid token: refresh it once
@@ -326,6 +454,30 @@ function seeThroughSupported() {
   return process.platform === 'win32' || process.platform === 'darwin';
 }
 
+/** Windows: is a game (or any other app) fullscreen in front of Quantm? (SHQueryUserNotificationState) */
+let fullscreenApi;
+function otherAppFullscreen(win) {
+  if (process.platform !== 'win32' || fullscreenApi === null) return false;
+  try {
+    const koffi = require('koffi');
+    if (!fullscreenApi) {
+      fullscreenApi = {
+        state: koffi.load('shell32.dll').func('long __stdcall SHQueryUserNotificationState(_Out_ int *state)'),
+        foreground: koffi.load('user32.dll').func('void * __stdcall GetForegroundWindow()')
+      };
+    }
+    const state = [0];
+    // 2 = QUNS_BUSY (a fullscreen app, borderless games too), 3 = QUNS_RUNNING_D3D_FULL_SCREEN (exclusive fullscreen)
+    if (fullscreenApi.state(state) !== 0 || (state[0] !== 2 && state[0] !== 3)) return false;
+    const front = fullscreenApi.foreground();
+    return !front || koffi.address(front) !== koffi.address(koffi.decode(win.getNativeWindowHandle(), 'void *'));
+  } catch (error) {
+    fullscreenApi = null;
+    console.error('Fullscreen detection unavailable', error);
+    return false;
+  }
+}
+
 /** Windows build number (19045 = Windows 10 22H2, 22000+ = Windows 11, 22621+ = 11 22H2) */
 function windowsBuild() {
   return process.platform === 'win32' ? parseInt(os.release().split('.')[2], 10) || 0 : 0;
@@ -347,7 +499,7 @@ function resolveBlurMethod() {
 function transparencyEffectsOn() {
   if (process.platform !== 'win32') return Promise.resolve(true);
   return new Promise((resolve) => {
-    const key = 'HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize';
+    const key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize';
     require('child_process').execFile('reg', ['query', key, '/v', 'EnableTransparency'], { windowsHide: true, timeout: 3000 },
       (error, stdout) => resolve(error ? true : !/EnableTransparency\s+REG_DWORD\s+0x0\b/.test(stdout)));
   });
@@ -487,6 +639,14 @@ function createMainWindow() {
   mainWindow.on('hide', () => sendVisibility(true));
   mainWindow.on('restore', () => sendVisibility(false));
   mainWindow.on('show', () => sendVisibility(false));
+  // Performance mode can follow games: tell the page while another app is fullscreen (checked every 3 s)
+  let gaming = false;
+  const gamingTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) { clearInterval(gamingTimer); return; }
+    const now = otherAppFullscreen(mainWindow);
+    if (now !== gaming) { gaming = now; mainWindow.webContents.send('window:gaming', gaming); }
+  }, 3000);
+  mainWindow.webContents.on('did-finish-load', () => { if (gaming) mainWindow.webContents.send('window:gaming', true); });
   mainWindow.on('unmaximize', sendMaximized);
   // Windows 11 drops the acrylic/mica backdrop when the window is maximized or restored, leaving it
   // black (an Electron bug fixed in later versions): put the backdrop back after each change
@@ -616,6 +776,10 @@ handle('api:request', (event, request) => {
   if (!validApiRequest(request)) return { ok: false, status: 400, data: { error: 'bad_request' } };
   return apiRequest(request);
 });
+handle('api:humanCheck', (event, url) => {
+  const checkUrl = humanCheckUrl({ url });
+  return checkUrl ? openHumanCheck(checkUrl) : false;
+});
 
 // waveform data lives on wave.sndcdn.com, which has no CORS headers
 handle('net:json', async (event, url) => {
@@ -720,6 +884,13 @@ handle('window:titlebar', (event, { color, symbolColor } = {}) => {
     mainWindow.setTitleBarOverlay({ color, symbolColor, height: TITLEBAR_HEIGHT });
   }
 });
+
+// Import from Spotify: a public playlist's songs, and Audius / Bandcamp searches (never given the SoundCloud login)
+// Node's fetch, not net.fetch: Bandcamp answers Chromium's network stack with an HTML page instead of results
+const sources = importSources.createSources({ fetch: (url, options) => fetch(url, options) });
+handle('sources:spotifyPlaylist', (event, link) => sources.spotifyPlaylist(link));
+handle('sources:audiusSearch', (event, query) => sources.audiusSearch(query));
+handle('sources:bandcampSearch', (event, query) => sources.bandcampSearch(query));
 
 handle('shell:open', (event, url) => {
   if (typeof url === 'string' && url.length < 4096 && /^https:\/\//.test(url)) shell.openExternal(url);

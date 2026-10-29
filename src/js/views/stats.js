@@ -5,6 +5,7 @@ import { h, clear, artwork } from '../dom.js';
 import { icon } from '../icons.js';
 import { store } from '../store.js';
 import { player } from '../player.js';
+import { isExternalId } from '../sources.js';
 import { pageHeader, emptyState, button, modal, toast, link, userHref, trackHref } from '../ui.js';
 import {
   RANGES, getStats, rangeTotals, series, topTracks, topArtists, topGenres, streaks, badgeList, formatListening, formatTime
@@ -85,12 +86,39 @@ export async function render(page) {
 
   // --- top tracks -----------------------------------------------------------
 
-  async function playFrom(list, index) {
+  // An Audius song plays from what the stats stored for it (source, sourceId, title, artist, length, artwork).
+  // Bandcamp songs only open on Bandcamp, and entries stored before these fields existed can't be replayed.
+  function externalTrack(t) {
+    if (t.source !== 'audius' || typeof t.sourceId !== 'string' || !t.sourceId) return null;
+    const id = Number(t.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return null;
+    return {
+      id, source: 'audius', sourceId: t.sourceId,
+      title: String(t.title || 'Untitled'), duration: Number(t.duration) > 0 ? Number(t.duration) : 0,
+      artwork_url: t.artwork || null,
+      user: { id: t.artistId ?? null, username: String(t.artist || 'Audius'), avatar_url: null },
+      media: { transcodings: [] }
+    };
+  }
+
+  // Queue every playable top track in order. "Play all" starts at the first playable one; a row starts
+  // at its own track and says so if that one can't play.
+  async function playFrom(list, index, all = false) {
     try {
-      const tracks = await api.tracksByIds(list.map(t => Number(t.id)));
-      const wanted = tracks.findIndex(t => String(t.id) === String(list[index].id));
-      if (wanted < 0) return toast("That track isn't available anymore", 'error');
-      player.toggleOrPlay(tracks, wanted, context);
+      // only SoundCloud songs are looked up; Audius and Bandcamp ids aren't SoundCloud ids
+      const lookup = list.map(t => Number(t.id)).filter(id => Number.isSafeInteger(id) && id > 0 && !isExternalId(id));
+      const found = lookup.length ? await api.tracksByIds(lookup) : [];
+      const byId = new Map(found.map(t => [String(t.id), t]));
+      const queue = [];
+      const places = list.map(t => {
+        const track = isExternalId(t.id) ? externalTrack(t) : byId.get(String(t.id));
+        return track ? queue.push(track) - 1 : -1;
+      });
+      if (!queue.length) return toast(all ? "None of these tracks can play here" : "That track isn't available anymore", 'error');
+      const start = all ? 0 : places[index];
+      if (start === undefined || start < 0) return toast(list[index] && list[index].source === 'bandcamp'
+        ? 'Bandcamp songs only play on Bandcamp' : "That track isn't available anymore", 'error');
+      player.toggleOrPlay(queue, start, context);
     } catch (e) {
       toast("Couldn't load that track", 'error');
     }
@@ -106,7 +134,7 @@ export async function render(page) {
         cover,
         h('div.stats-main',
           h('a.track-title', { href: trackHref(t), onclick: (e) => e.stopPropagation() }, t.title),
-          h('div.track-sub', t.artistId ? link('#/user/' + t.artistId, t.artist, 'muted') : h('span.muted', t.artist))
+          h('div.track-sub', t.artistId && !isExternalId(t.artistId) ? link('#/user/' + t.artistId, t.artist, 'muted') : h('span.muted', t.artist))
         ),
         h('div.stats-count', h('strong', String(t.plays)), h('span.muted', t.plays === 1 ? ' play' : ' plays'))
       );
@@ -115,7 +143,7 @@ export async function render(page) {
     });
     return h('section.section',
       h('h2.section-title', 'Top tracks',
-        list.length ? button('Play all', () => playFrom(list, 0), 'btn-ghost.btn-sm', 'play') : null),
+        list.length ? button('Play all', () => playFrom(list, 0, true), 'btn-ghost.btn-sm', 'play') : null),
       rows.length ? h('div.stats-list', rows) : h('p.muted', 'No plays in this range yet.')
     );
   }
@@ -128,7 +156,7 @@ export async function render(page) {
       h('h2.section-title', 'Top artists'),
       list.length ? h('div.stats-list', list.map((a, i) => {
         const src = artwork(a.avatar, 't67x67');
-        const linked = /^\d+$/.test(a.id);
+        const linked = /^\d+$/.test(a.id) && !isExternalId(a.id);
         return h('div.stats-artist',
           h('div.stats-rank', String(i + 1)),
           h('div.avatar', { style: { width: '40px', height: '40px', backgroundImage: src ? `url("${src}")` : '' } }),

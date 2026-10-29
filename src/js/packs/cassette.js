@@ -1,6 +1,6 @@
 import { h, clear, duration } from '../dom.js';
 import { motionAllowed } from '../audio-reactivity.js';
-import { button, likeButton, link, trackHref, userHref, errorState, isLocked, openInSoundCloud } from '../ui.js';
+import { button, likeButton, link, trackHref, userHref, errorState, isLocked, openInSoundCloud, openLabel } from '../ui.js';
 import { createCassette, createMeter } from './cassette-deck.js';
 
 export function mount(ctx) {
@@ -172,11 +172,11 @@ function renderHome(container, ctx, motion) {
       const locked = isLocked(track);
       queue.append(h('button.cassette-jcard', {
         type: 'button', 'aria-current': index === player.index ? 'true' : null,
-        title: locked ? `Open ${track.title} in SoundCloud` : `Play ${track.title}`,
+        title: locked ? `${openLabel(track)}: ${track.title}` : `Play ${track.title}`,
         onclick: () => locked ? openInSoundCloud(track) : player.jump(index)
       }, h('span.cassette-jcard-spine', String(index + 1).padStart(2, '0')),
       h('span.cassette-jcard-meta', h('b', track.title || 'Untitled'),
-        h('span', locked ? 'Open in SoundCloud' : track.user?.username || 'Unknown artist')),
+        h('span', locked ? openLabel(track) : track.user?.username || 'Unknown artist')),
       h('span.cassette-jcard-duration', duration(track.duration))));
     });
     if (player.queue.length > start + 32) queue.append(h('p.cassette-queue-more', 'More tracks in the player queue.'));

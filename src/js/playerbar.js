@@ -1,11 +1,12 @@
 // Player bar (bottom, top, or a docked side panel) + queue panel
-import { h, clear, duration, coverOf, compact, linkify } from './dom.js';
+import { h, clear, duration, coverOf, compact, linkify, sliderKey } from './dom.js';
 import { icon } from './icons.js';
 import { player } from './player.js';
 import { createVisualizer } from './visualizer.js';
 import { store, settings, saveSettings } from './store.js';
 import { getSleepTimer, formatRemaining } from './sleep.js';
-import { iconButton, likeButton, repostButton, avatar, addToPlaylistDialog, trackMenu, link, userHref, trackHref, emptyState, menu, transitionDialog, toast } from './ui.js';
+import { iconButton, likeButton, repostButton, avatar, addToPlaylistDialog, trackMenu, link, userHref, trackHref, sourceBadge, emptyState, menu, transitionDialog, toast } from './ui.js';
+import { isExternal, isExternalId } from './sources.js';
 import { getCues, cueEvents, transitionFor } from './cues.js';
 import { formatCueTime } from './cue-time.js';
 import { createMixRate } from './mixrate.js';
@@ -28,7 +29,8 @@ export function mountPlayerBar(root, { offline = false } = {}) {
   const knob = h('div.pb-knob');
   const hoverTime = h('div.pb-hovertime');
   const ticks = h('div.pb-cue-ticks');
-  const progress = h('div.pb-progress', h('div.pb-track', buffer, fill, ticks, knob), hoverTime);
+  const progress = h('div.pb-progress', { role: 'slider', tabindex: '0', 'aria-label': 'Seek', 'aria-valuemin': '0', 'aria-valuemax': '0', 'aria-valuenow': '0' },
+    h('div.pb-track', buffer, fill, ticks, knob), hoverTime);
   const progressRow = h('div.pb-progress-row', current, progress, total);
   const renderTicks = () => {
     clear(ticks);
@@ -87,7 +89,7 @@ export function mountPlayerBar(root, { offline = false } = {}) {
   syncSleep();
   const volIcon = iconButton('volume', 'Mute (M)', () => player.toggleMute());
   const volFill = h('div.pb-fill');
-  const volume = h('div.pb-volume', h('div.pb-track', volFill));
+  const volume = h('div.pb-volume', { role: 'slider', tabindex: '0', 'aria-label': 'Volume', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': '100' }, h('div.pb-track', volFill));
 
   const visualizer = createVisualizer();
   const pbText = h('div.pb-text', title, artist);
@@ -243,11 +245,32 @@ export function mountPlayerBar(root, { offline = false } = {}) {
     hoverTime.style.left = f * 100 + '%';
   });
 
+  // keyboard: arrows move 5 seconds, Page keys 30, Home / End jump to the ends (the global arrow shortcuts skip a focused slider)
+  progress.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || !player.current || !player.duration) return;
+    const next = sliderKey(e.key, player.audio.currentTime, 0, player.duration, 5, 30);
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    player.seek(next);
+  });
+  // screen readers read the position as a time; refreshed once per second, not on every tick
+  let seekAria = '';
+  const renderSeekAria = (time, dur) => {
+    const key = Math.floor(time) + '/' + Math.floor(dur || 0);
+    if (key === seekAria) return;
+    seekAria = key;
+    progress.setAttribute('aria-valuemax', String(Math.floor(dur || 0)));
+    progress.setAttribute('aria-valuenow', String(Math.floor(time)));
+    progress.setAttribute('aria-valuetext', `${duration(time * 1000)} of ${duration((dur || 0) * 1000)}`);
+  };
+
   player.on('time', (time, dur) => {
     if (dragging) return;
     current.textContent = duration(time * 1000);
     total.textContent = duration(dur * 1000);
     setProgress(dur ? time / dur : 0);
+    renderSeekAria(time, dur);
     const a = player.audio;
     if (a.buffered.length && dur) buffer.style.width = (a.buffered.end(a.buffered.length - 1) / dur) * 100 + '%';
   });
@@ -277,6 +300,8 @@ export function mountPlayerBar(root, { offline = false } = {}) {
   const renderVolume = () => {
     const v = player.muted ? 0 : player.volume;
     volFill.style.width = v * 100 + '%';
+    volume.setAttribute('aria-valuenow', String(Math.round(v * 100)));
+    volume.setAttribute('aria-valuetext', Math.round(v * 100) + '%');
     clear(volIcon).append(icon(v === 0 ? 'mute' : v < 0.5 ? 'volumeLow' : 'volume'));
   };
   volume.addEventListener('mousedown', (e) => {
@@ -285,6 +310,14 @@ export function mountPlayerBar(root, { offline = false } = {}) {
     move(e);
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
+  });
+  volume.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const next = sliderKey(e.key, player.muted ? 0 : player.volume, 0, 1, 0.05, 0.1);
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    player.setVolume(Math.round(next * 100) / 100);
   });
   volume.addEventListener('wheel', (e) => { e.preventDefault(); player.setVolume(player.volume - Math.sign(e.deltaY) * 0.05); }, { passive: false });
   player.on('volume', renderVolume);
@@ -310,19 +343,24 @@ export function mountPlayerBar(root, { offline = false } = {}) {
     bar.classList.remove('idle');
     side.classList.remove('idle');
     renderArt();
-    art.href = trackHref(track);
+    // Audius / Bandcamp songs have no SoundCloud page to link to
+    for (const el of [art, title]) {
+      if (trackHref(track)) el.setAttribute('href', trackHref(track));
+      else el.removeAttribute('href');
+    }
     art.title = track.title;
     art.setAttribute('aria-label', track.title);
     title.textContent = track.title;
-    title.href = trackHref(track);
     title.title = track.title;
     // the small avatar only shows in the side panel
+    const sourceUser = track.user && !isExternalId(track.user.id);
     clear(artist).append(
-      track.user ? h('a.side-avatar', { href: userHref(track.user), tabindex: -1, 'aria-hidden': 'true' }, avatar(track.user, 20)) : null,
-      track.user ? link(userHref(track.user), track.user.username) : ''
+      sourceUser ? h('a.side-avatar', { href: userHref(track.user), tabindex: -1, 'aria-hidden': 'true' }, avatar(track.user, 20)) : null,
+      sourceUser ? link(userHref(track.user), track.user.username) : (track.user ? track.user.username : ''),
+      sourceBadge(track)
     );
     clear(likeSlot);
-    if (!offline) likeSlot.append(likeButton(track));
+    if (!offline && !isExternal(track)) likeSlot.append(likeButton(track));
     likeBase = track.likes_count != null ? track.likes_count - (store.isLiked(track) ? 1 : 0) : null;
     renderRepost();
     total.textContent = duration(track.duration);
@@ -477,20 +515,29 @@ export function mountPlayerBar(root, { offline = false } = {}) {
     player.queue.forEach((track, i) => {
       if (i < player.index - 3) return; // keep a little history visible
       const row = h('div.queue-row' + (i === player.index ? '.current' : '') + (i < player.index ? '.past' : ''),
-        { draggable: true, dataset: { index: i } },
+        { draggable: true, dataset: { index: i }, tabindex: '0', role: 'button', 'aria-label': `Play ${track.title}` },
         h('div.queue-art', { style: { backgroundImage: coverOf(track, 't67x67') ? `url("${coverOf(track, 't67x67')}")` : '' } }),
         h('div.queue-meta', h('div.queue-title', track.title), h('div.muted.small', track.user ? track.user.username : '')),
         h('span.muted.small', duration(track.duration)),
         i !== player.index ? iconButton('close', 'Remove', () => player.removeFromQueue(i), 'queue-remove') : null
       );
       row.addEventListener('dblclick', () => player.jump(i));
-      row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(i)); row.classList.add('dragging'); });
+      // Enter / Space on the row itself (not on its Remove button) plays it, like a double-click
+      row.addEventListener('keydown', (e) => {
+        if (e.target !== row || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault();
+        e.stopPropagation(); // Space would also pause through the global shortcut
+        player.jump(i);
+      });
+      row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-quantm-queue', String(i)); row.classList.add('dragging'); });
       row.addEventListener('dragend', () => row.classList.remove('dragging'));
       row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('drop'); });
       row.addEventListener('dragleave', () => row.classList.remove('drop'));
       row.addEventListener('drop', (e) => {
         e.preventDefault();
-        const from = Number(e.dataTransfer.getData('text/plain'));
+        // only a row dragged from this list counts (a file dropped from outside carries no index)
+        const raw = e.dataTransfer.getData('application/x-quantm-queue');
+        const from = raw === '' ? NaN : Number(raw);
         if (!isNaN(from) && from !== i) player.moveInQueue(from, i);
       });
       if (i === player.index) list.append(h('div.queue-label', 'Now playing'));

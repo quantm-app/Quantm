@@ -1,4 +1,4 @@
-// Local metadata only. Playback resolves fresh streams through api.streamFor(id).
+// Local metadata only. Playback resolves fresh streams through api.streamFor(id) (SoundCloud) or the track's source.
 import { Emitter } from './dom.js';
 
 export const KEY = 'quantm.localPlaylists';
@@ -8,11 +8,21 @@ const text = (s, max) => typeof s === 'string' && s.length <= max;
 const url = value => typeof value === 'string' && value.length <= 4096 && /^https:\/\//i.test(value) ? value : null;
 const titleOf = title => text(title, 300) && title.trim() ? title.trim() : null;
 
-function snapshot(track) {
+const SOURCES = new Set(['audius', 'bandcamp']);
+const MAX_ALTERNATES = 4;
+
+// nested=true is for backup copies, which can't have backups of their own
+function snapshot(track, nested = false) {
   if (!track || !validId(track.id) || !titleOf(track.title) ||
       !Number.isFinite(track.duration) || track.duration < 0 ||
       !track.user || !validId(track.user.id) || !text(track.user.username, 300) || !track.user.username.trim()) return null;
+  const external = SOURCES.has(track.source) && typeof track.sourceId === 'string' && track.sourceId.length > 0 && text(track.sourceId, 200);
+  const alternates = nested ? [] : cleanAlternates(track.alternates, track.id);
   return {
+    // Audius / Bandcamp copies (see sources.js) say where they came from; SoundCloud ones carry nothing extra
+    ...(external ? { source: track.source, sourceId: track.sourceId } : {}),
+    // other places the same song can be played, tried in order when this copy won't load
+    ...(alternates.length ? { alternates } : {}),
     id: track.id, title: track.title.trim(), duration: track.duration,
     permalink_url: url(track.permalink_url), artwork_url: url(track.artwork_url),
     user: { id: track.user.id, username: track.user.username, avatar_url: url(track.user.avatar_url) },
@@ -24,9 +34,15 @@ function snapshot(track) {
   };
 }
 
+function cleanAlternates(list, ownId) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set([ownId]);
+  return list.slice(0, 20).map(t => snapshot(t, true)).filter(t => t && !seen.has(t.id) && seen.add(t.id)).slice(0, MAX_ALTERNATES);
+}
+
 function cleanTracks(tracks) {
   const seen = new Set();
-  return tracks.map(snapshot).filter(t => t && !seen.has(t.id) && seen.add(t.id));
+  return tracks.map(t => snapshot(t)).filter(t => t && !seen.has(t.id) && seen.add(t.id));
 }
 
 function cleanPlaylist(p) {

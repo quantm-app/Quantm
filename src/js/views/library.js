@@ -242,7 +242,10 @@ function libraryGrid(keep, emptyText) {
   const seen = new Set();
   let alive = true;
 
-  const loadMore = async () => {
+  // one page at a time: the pager answers an overlapping call with nothing at once, which would spin this loop
+  let loading = null;
+  const loadMore = () => (loading ||= loadPage().finally(() => { loading = null; }));
+  const loadPage = async () => {
     // filtered batches can come back empty, so keep going until something shows up
     let added = 0;
     try {

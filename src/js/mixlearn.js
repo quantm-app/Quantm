@@ -10,7 +10,8 @@ const KEY = 'quantm.mixlearn';
 const RATE = 0.1;
 const FIELDS = ['length', 'dj', 'stretch'];
 const BUCKETS = ['slow', 'mid', 'fast', 'faster', 'nobeat'];
-const STYLES = ['blend', 'dropcut'];
+// the genre transitions (transitions.js) are tallied apart from the smooth blend: their length isn't the blend's
+const STYLES = ['blend', 'dropcut', 'quickcut', 'doubledrop', 'filterfade'];
 // How far a try may stray from the learned value (either direction).
 const VARIATION = Object.freeze({ length: 0.12, dj: 0.15, stretch: 0.008 });
 
@@ -72,9 +73,11 @@ function sanitize(raw) {
   entry.bad = count(raw.bad);
   if (raw.styles && typeof raw.styles === 'object') {
     entry.styles = {};
-    for (const style of STYLES) entry.styles[style] = {
-      good: count(raw.styles[style]?.good), bad: count(raw.styles[style]?.bad)
-    };
+    for (const style of STYLES) {
+      // the genre styles only appear once they have been tried
+      if (!['blend', 'dropcut'].includes(style) && !raw.styles[style]) continue;
+      entry.styles[style] = { good: count(raw.styles[style]?.good), bad: count(raw.styles[style]?.bad) };
+    }
   }
   return entry;
 }
@@ -167,13 +170,15 @@ export function record(choice, outcome) {
   const { buckets, genres } = load();
   const sign = outcome === 'good' ? 1 : -1;
   // Step by the variation that was tried, applied to what is learned now.
-  const step = field => choice.style === 'dropcut' ? 0 : sign * RATE * (params[field] - base[field]);
+  // only a smooth blend teaches the blend settings: the other styles have their own length and shape
+  const step = field => choice.style && choice.style !== 'blend' ? 0 : sign * RATE * (params[field] - base[field]);
   const tempoEntry = buckets[parsed.tempo] || (buckets[parsed.tempo] = fresh());
   const genreEntry = parsed.family ? genres[choice.bucket] || (genres[choice.bucket] = fresh()) : null;
   for (const entry of [tempoEntry, genreEntry]) {
     if (!entry) continue;
     if (STYLES.includes(choice.style)) {
       entry.styles ||= { blend: { good: 0, bad: 0 }, dropcut: { good: 0, bad: 0 } };
+      entry.styles[choice.style] ||= { good: 0, bad: 0 };
       entry.styles[choice.style][outcome]++;
     }
     entry[outcome] += 1;

@@ -3,6 +3,7 @@ import * as api from './api.js';
 import { normalizeEqualizer } from './equalizer.js';
 import { Emitter } from './dom.js';
 import { toast } from './ui.js';
+import { isExternal } from './sources.js';
 
 class Store extends Emitter {
   constructor() {
@@ -60,6 +61,7 @@ class Store extends Emitter {
   }
 
   toggleLike(item) {
+    if (isExternal(item)) return false; // Audius and Bandcamp songs aren't on SoundCloud
     if (item.kind === 'playlist') {
       return this.toggle('likedPlaylists', item.id, on => api.likePlaylist(this.me.id, item.id, on), ['Added to your liked playlists', 'Removed from your liked playlists']);
     }
@@ -67,6 +69,7 @@ class Store extends Emitter {
   }
 
   toggleRepost(item) {
+    if (isExternal(item)) return false;
     if (item.kind === 'playlist') {
       return this.toggle('repostedPlaylists', item.id, on => api.repostPlaylist(item.id, on), ['Reposted to your profile', 'Repost removed']);
     }
@@ -133,6 +136,7 @@ const defaults = {
   discordIdle: true,        // keep a "Playing Quantm" status while nothing plays
   themeEffects: 'auto',     // auto (follow the system's reduce-motion setting) | on | off
   performanceMode: false,   // no blur, animations or visualizer
+  performanceWhileGaming: true, // Performance mode on by itself while a game is fullscreen
   pauseWhenHidden: true,    // stop visuals and free memory while minimized
   speedMode: 'normal',      // normal | nightcore | slowed | custom
   playbackSpeed: 1,         // 0.5-2, used by custom

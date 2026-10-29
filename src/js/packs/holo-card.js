@@ -1,6 +1,6 @@
 import { h, clear, artwork, compact, duration } from '../dom.js';
 import { motionAllowed } from '../audio-reactivity.js';
-import { button, likeButton, link, trackHref, errorState, isLocked, openInSoundCloud } from '../ui.js';
+import { button, likeButton, link, trackHref, errorState, isLocked, openInSoundCloud, openLabel } from '../ui.js';
 
 const clamp = value => Math.max(0, Math.min(1, Number(value) || 0));
 const smoothstep = value => { const p = clamp(value); return p * p * (3 - 2 * p); };
@@ -251,10 +251,10 @@ function renderHome(container, ctx, motion) {
       const rarity = rarityFor(track.likes_count);
       const row = h('button.hc-queue-card', {
         type: 'button', 'aria-current': index === player.index ? 'true' : null,
-        title: locked ? `Open ${track.title} in SoundCloud` : `Play ${track.title}`,
+        title: locked ? `${openLabel(track)}: ${track.title}` : `Play ${track.title}`,
         onclick: () => locked ? openInSoundCloud(track) : player.jump(index)
       }, h('span.hc-queue-no', String(index + 1).padStart(2, '0')),
-      h('span.hc-queue-meta', h('b', track.title || 'Untitled'), h('span', locked ? 'Open in SoundCloud' : track.user?.username || 'Unknown artist')),
+      h('span.hc-queue-meta', h('b', track.title || 'Untitled'), h('span', locked ? openLabel(track) : track.user?.username || 'Unknown artist')),
       h('span.hc-queue-end', h('span.hc-queue-glyph', { title: `${rarity.name} · based on like count` }, rarity.glyph), h('span', duration(track.duration))));
       row.style.setProperty('--fan', String((offset % 5 - 2) * 0.38));
       queue.append(row);

@@ -81,6 +81,7 @@ export function mount(ctx) {
       homes.add(shell);
       container.append(shell);
       const cleanup = await home.render(content, ...args);
+      if (!alive) { if (typeof cleanup === 'function') cleanup(); return; }
       return () => {
         if (typeof cleanup === 'function') cleanup();
         homes.delete(shell);

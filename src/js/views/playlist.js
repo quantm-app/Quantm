@@ -130,7 +130,11 @@ export async function render(page, params) {
     clear(listSlot).append(list);
   };
 
-  async function removeTrack(track) {
+  // changes are saved one after another: two in flight would both start from the same list and the later save would undo the earlier one
+  let saving = Promise.resolve();
+  const queued = (task) => { const run = saving.then(task); saving = run.catch(() => {}); return run; };
+
+  const removeTrack = (track) => queued(async () => {
     const remaining = tracks.filter(t => t.id !== track.id);
     try {
       await api.setPlaylistTracks(data.id, remaining.map(t => t.id));
@@ -143,9 +147,9 @@ export async function render(page, params) {
     renderList();
     store.playlistChanged();
     toast('Removed from playlist');
-  }
+  });
 
-  async function reorder(order) {
+  const reorder = (order) => queued(async () => {
     const previous = tracks.slice();
     tracks.splice(0, tracks.length, ...order);
     renderList();
@@ -158,7 +162,7 @@ export async function render(page, params) {
       renderList();
       toast("Couldn't save the new order", 'error');
     }
-  }
+  });
 
   renderList();
 

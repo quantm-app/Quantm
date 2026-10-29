@@ -3,6 +3,20 @@ import { button, errorState, isLocked, openInSoundCloud } from '../ui.js';
 
 const tempo = grid => grid?.bpm > 0 ? grid.bpm : grid?.period > 0 ? 60 / grid.period : 0;
 const fixed = value => Number.isFinite(value) && value > 0 ? value.toFixed(1).padStart(5, '0') : '---.-';
+// Drop cut stages as the player reports them (dropcut.js dropPhase)
+const PHASES = { build: 'BUILD', roll: 'LOOP ROLL', echo: 'ECHO OUT', cut: 'CUT', drop: 'DROP' };
+// genre transitions (transitions.js) that blend; a quick cut is a drop cut schedule
+const GENRES = { doubledrop: 'DOUBLE DROP', filterfade: 'FILTER FADE' };
+const clamp01 = value => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+
+/** How far the outgoing deck's bass is filtered away during a drop cut build (0 = full bass, 1 = none) */
+function bassKill(player, phase) {
+  if (phase === 'cut' || phase === 'drop') return 1;
+  const schedule = player.fading?.schedule;
+  const now = player.normalizer?.ctx?.currentTime;
+  if (!schedule || schedule.kill?.style === 'none' || !Number.isFinite(now) || !(schedule.cut > schedule.start)) return 0;
+  return clamp01((now - schedule.start) / (schedule.cut - schedule.start));
+}
 
 function deck(letter, role) {
   const cover = h('div.td-label', { 'aria-hidden': 'true' }, h('span', letter));
@@ -173,7 +187,14 @@ function renderConsole(container, ctx) {
     consoleNode.dataset.playing = String(playing);
     consoleNode.dataset.auto = on ? 'on' : 'off';
     consoleNode.dataset.mixing = String(!!mix);
-    status.textContent = !on ? 'AUTO MIX OFF' : !playing ? 'PAUSED' : mix ? 'MIX IN PROGRESS' : 'AUTO MIX ON';
+    // a drop cut swaps decks on the drop instead of blending, and needs no beat lock
+    const style = mix ? snapshot.mix?.style || mix.style || 'blend' : 'none';
+    const dropCut = style === 'dropcut';
+    const phase = dropCut ? snapshot.mix?.phase || 'build' : '';
+    consoleNode.dataset.style = style;
+    const genre = mix ? snapshot.mix?.genre || null : null;
+    const mixLabel = dropCut ? `${genre === 'quickcut' ? 'QUICK CUT' : 'DROP CUT'} · ${PHASES[phase] || 'BUILD'}` : GENRES[genre] || 'SMOOTH BLEND';
+    status.textContent = !on ? 'AUTO MIX OFF' : !playing ? 'PAUSED' : mix ? mixLabel : 'AUTO MIX ON';
     const next = on ? mix?.to || snapshot.upNext?.track || player.queue?.[player.index + 1] : null;
     const gridA = mix ? player.lock?.match?.gridOut || player.mixPlan?.grid :
       (snapshot.plan?.grid || snapshot.live || snapshot.structure?.grid);
@@ -185,11 +206,18 @@ function renderConsole(container, ctx) {
       on ? (tempo(gridB) || (!mix && snapshot.upNext?.bpm) || 0) * rateB : 0, rateB);
     const locked = !!mix && snapshot.lock?.active && Number.isFinite(snapshot.lock.errorMs) && Math.abs(snapshot.lock.errorMs) < 12;
     consoleNode.dataset.locked = String(!!locked);
-    lockText.textContent = !on ? 'Standby' : !mix ? 'Awaiting mix' : locked ? 'Locked' : 'Drifting';
-    error.textContent = mix && Number.isFinite(snapshot.lock?.errorMs) ?
+    lockText.textContent = !on ? 'Standby' : !mix ? 'Awaiting mix' : dropCut ? 'No lock needed' : locked ? 'Locked' : 'Drifting';
+    const offset = mix && Number.isFinite(snapshot.lock?.errorMs) ?
       `${Math.abs(snapshot.lock.errorMs).toFixed(1)} ms offset` : mix ? 'Finding the beat' : 'No active mix';
+    error.textContent = dropCut ? 'Cuts on the drop' : offset;
     consoleNode.style.setProperty('--td-phase-error', `${Math.max(-50, Math.min(50, snapshot.lock?.errorMs || 0))}deg`);
-    const progress = mix && playing ? Math.max(0, Math.min(1, snapshot.mix?.progress || 0)) : 0;
+    // drop cut: the crossfader holds on A through the build and snaps to B at the cut; the low EQ on A
+    // turns down with the bass sweep and B's comes up on the drop (empty values hand back to the CSS)
+    const fader = dropCut ? (phase === 'cut' || phase === 'drop' ? 1 : 0) : null;
+    consoleNode.style.setProperty('--td-xfade', fader === null ? '' : String(fader));
+    deckA.node.style.setProperty('--td-eq-angle', dropCut ? `${Math.round(-120 * bassKill(player, phase))}deg` : '');
+    deckB.node.style.setProperty('--td-eq-angle', dropCut ? (phase === 'drop' ? '0deg' : '-120deg') : '');
+    const progress = mix && playing ? (fader ?? clamp01(snapshot.mix?.progress || 0)) : 0;
     crossfader.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
     syncCrate();
   }

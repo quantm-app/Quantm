@@ -3,6 +3,7 @@ import { icon } from '../icons.js';
 import { motionAllowed } from '../audio-reactivity.js';
 
 const clamp = value => Math.max(0, Math.min(1, Number(value) || 0));
+const QUEUE_ROWS = 100; // a queue of thousands only draws this many rows, around the current song
 const artist = track => track?.user?.username || track?.publisher_metadata?.artist || 'Unknown artist';
 
 function home(container, ctx) {
@@ -45,6 +46,7 @@ function home(container, ctx) {
   container.append(node);
   let lastPlay = '';
   let rows = [];
+  let first = 0; // queue index of rows[0]
   let lastCurrent = -2;
   let lastPulse = -Infinity;
   let previousPulse = 0;
@@ -52,15 +54,19 @@ function home(container, ctx) {
   function queue() {
     const focused = queueList.contains(document.activeElement) ? document.activeElement.dataset.index : null;
     clear(queueList); rows = []; lastCurrent = -2;
-    player.queue.forEach((track, index) => {
+    first = Math.max(0, Math.min(player.index - 5, player.queue.length - QUEUE_ROWS));
+    player.queue.slice(first, first + QUEUE_ROWS).forEach((track, offset) => {
+      const index = first + offset;
       const row = h('button.wh-queue-row', { type: 'button', dataset: { index }, onclick: () => player.jump(index) },
         h('span.wh-track-number', String(index + 1).padStart(2, '0')),
         h('span.wh-track-meta', h('strong', track.title || 'Untitled track'), h('span', artist(track))),
         h('span', duration(track.duration) || '--:--'));
       rows.push(row); queueList.append(row);
     });
+    const hidden = player.queue.length - first - rows.length;
+    if (hidden > 0) queueList.append(h('p.wh-empty', `+ ${hidden} MORE IN THE QUEUE`));
     if (!rows.length) queueList.append(h('p.wh-empty', 'LOAD A QUEUE. BRING THE ROOM TO LIFE.'));
-    if (focused !== null) rows[Number(focused)]?.focus({ preventScroll: true });
+    if (focused !== null) rows[Number(focused) - first]?.focus({ preventScroll: true });
   }
   function update(snapshot) {
     const track = player.current;
@@ -71,9 +77,11 @@ function home(container, ctx) {
     [prev, play, next].forEach(button => { button.disabled = !track; });
     elapsed.textContent = `${duration((player.audio.currentTime || 0) * 1000)} / ${duration((player.duration || 0) * 1000)}`;
     status.textContent = snapshot.mix ? `AUTO MIX / ${Math.round(clamp(snapshot.mix.progress) * 100)}% / ${snapshot.mix.to?.title || 'INCOMING TRACK'}` : player.playing ? 'SOUND SYSTEM ACTIVE' : 'SOUND SYSTEM IDLE';
+    // the song moved out of the drawn window of a long queue: draw the window around it
+    if (player.queue.length > QUEUE_ROWS && player.index >= 0 && (player.index < first || player.index >= first + QUEUE_ROWS)) queue();
     if (lastCurrent !== player.index) {
-      rows[lastCurrent]?.removeAttribute('aria-current');
-      rows[player.index]?.setAttribute('aria-current', 'true'); lastCurrent = player.index;
+      rows[lastCurrent - first]?.removeAttribute('aria-current');
+      rows[player.index - first]?.setAttribute('aria-current', 'true'); lastCurrent = player.index;
     }
   }
   // Idle profile: a gentle low skyline, so a paused wall reads as a standby display, not an empty box.

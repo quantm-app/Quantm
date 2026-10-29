@@ -42,6 +42,7 @@ function fixture(t) {
   p.normalizer = { ctx, effect: false,
     startDropCut(a, b, schedule) { this.effect = true; calls.push(['schedule', schedule]); return true; },
     clearDropCut() { this.effect = false; calls.push(['clear']); },
+    clearEchoOut() {},
     setFade(a, value) { calls.push(['fade', a, value]); },
     fadeDeck() { calls.push(['blend']); }, holdBass() {}, setActive() {}, startTrack() {},
     holdFade() {}, setEqualizer() {}
@@ -105,6 +106,7 @@ test('the real pair planner starts a muted pre-roll and arms its drop on the out
   assert.equal(p.current, f.to);
   assert.equal(p.fading.style, 'dropcut');
   assert.equal(p.fading.bass, false, 'incoming bass is never killed');
+  assert.ok(!p.fading.bassOpts, 'a drop cut gets no three-band blend shaping');
   assert.equal(f.incoming.audio.currentTime, 75, 'seek before the marker silently to reach its drop on time');
   f.incoming.audio.dispatchEvent({ type: 'playing' });
   assert.equal(p.fading.dropScheduled, true);

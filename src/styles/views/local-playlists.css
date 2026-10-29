@@ -19,3 +19,19 @@ html[data-perf] .qplaylist-card, html[data-perf] .qplaylist-list * { animation: 
 @media (max-width: 1100px) {
   .qplaylist-list .track-row { grid-template-columns: auto 48px minmax(0, 1fr) 50px auto; }
 }
+
+/* "Audius" / "Bandcamp" tag on songs that aren't from SoundCloud */
+.source-badge { flex: none; align-self: center; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted); font-size: 10px; line-height: 16px; letter-spacing: .02em; text-transform: uppercase; }
+
+/* Import from Spotify dialog */
+.spotify-import .input { width: 100%; margin-top: 8px; }
+.import-error { margin-top: 8px; color: var(--danger, #e5484d); }
+.import-status { margin: 12px 0 8px; font-weight: 600; }
+.import-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.import-bar-fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.import-song { margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-summary { margin: 8px 0; padding-left: 18px; }
+.import-missing { margin-top: 12px; max-height: 220px; overflow-y: auto; }
+.import-missing-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
+.import-missing-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-perf] .import-bar-fill { transition: none; }

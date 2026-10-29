@@ -3,10 +3,14 @@
 // tempo and where the beats fall (beats.js). The next song is pre-played silently for a few
 // seconds so its beats are known too. During the mix the incoming song is sped up or slowed
 // down slightly so its beats stay on top of the outgoing song's, and the two songs swap bass
-// halfway through (normalizer.js), like a DJ does. Songs without a clear beat get a normal
-// crossfade with the bass swap.
+// halfway through (normalizer.js), like a DJ does, handing the mids and highs over too. When a song's
+// downbeat is known the mix starts and ends on its phrase lines and the incoming song enters on its own
+// bar 1 (phraseMix, alignedStart). Songs without a clear beat get a normal crossfade with the bass swap.
+// The same polling also maps where each song is sung (vocals.js) so two singers don't overlap, and a song whose
+// beat stops before the end gets a loop of its last clean bars or an echo-out (endings.js, barloop.js, echoout.js).
 
 import * as beats from './beats.js';
+import { ChromaAccumulator, estimateKey } from './keys.js';
 
 const POLL_MS = 10;
 const KEEP_SECONDS = 40;          // how much of each deck's recent playing is kept for analysis
@@ -20,12 +24,73 @@ const CATCH_UP_SECONDS = 2;       // the first seconds of a mix may correct hard
 const DEAD_ZONE = 0.008;          // beats within 8 ms are together; leave the tempo alone
 const RELEASE_SECONDS = 8;        // after the mix the incoming song eases back to its own tempo
 
+const KEY_EVERY = 0.15;           // media seconds between spectra fed to key detection (a few times a second is plenty)
+const KEY_EDGE = 10;              // the first and last seconds are intro noise, fades and outros: not the song's key
+const KEY_MIN_SECONDS = 30;       // of music sampled before the key is trusted at all
+const KEY_MIN_FRAMES = 100;       // ...and tonal frames kept (drum hits and silence are thrown away by the accumulator)
+const KEY_MIDDLE = [0.2, 0.8];    // the steady middle of a song counts fully; the ends count less
+const KEY_EDGE_WEIGHT = 0.6;
+
+/**
+ * Listens for a song's musical key while it plays. The beat watcher hands it the deck's spectrum a few
+ * times a second (reusing the deck's analyser, no extra node); the spectra pile up as pitch-class energy
+ * (keys.js) and estimate() reads the key off them. Nothing is sampled while paused, seeking, muted, in
+ * the first or last seconds, during silence, or while the playback speed shifts the pitch.
+ */
+export class KeyListener {
+  constructor({ duration = 0 } = {}) {
+    this.duration = duration > 0 ? duration : 0;
+    this.acc = null;
+    this.last = -Infinity;
+    this.span = 0;      // seconds of music sampled
+    this.cached = null; // [frames, estimate]
+  }
+
+  /** Take one spectrum from `norm.spectrum(audio)` if it is time; returns whether one was taken */
+  sample(audio, norm) {
+    if (audio.paused || audio.seeking || audio.muted || typeof norm.spectrum !== 'function') return false;
+    // a deck whose pitch follows its speed (Nightcore, Slowed, a custom speed with keep pitch off) plays the song in another
+    // key: that spectrum must never be filed under the song's own key, so nothing is taken from it (what was heard before stays)
+    if (audio.preservesPitch === false && Math.abs((audio.playbackRate || 1) - 1) > 0.005) return false;
+    const t = audio.currentTime;
+    if (t < this.last) this.last = -Infinity; // a seek back
+    if (t - this.last < KEY_EVERY) return false;
+    if (t < KEY_EDGE || (this.duration > 0 && t > this.duration - KEY_EDGE)) return false;
+    const spectrum = norm.spectrum(audio);
+    if (!spectrum) return false;
+    try {
+      this.acc ??= new ChromaAccumulator({ sampleRate: spectrum.sampleRate, fftSize: spectrum.fftSize });
+    } catch { return false; }
+    const place = this.duration > 0 ? t / this.duration : 0.5;
+    const before = this.acc.frames;
+    this.acc.add(spectrum.db, place >= KEY_MIDDLE[0] && place <= KEY_MIDDLE[1] ? 1 : KEY_EDGE_WEIGHT);
+    // time only counts when the frame was tonal (not silence or a drum hit)
+    if (this.acc.frames > before) this.span += this.last > -Infinity && t - this.last < 1 ? t - this.last : KEY_EVERY;
+    this.last = t;
+    return true;
+  }
+
+  /** The key heard so far ({ key, camelot, name, confidence, chroma }), or null until enough music has been heard */
+  estimate() {
+    const acc = this.acc;
+    if (!acc || acc.frames < KEY_MIN_FRAMES || this.span < KEY_MIN_SECONDS) return null;
+    if (this.cached?.[0] === acc.frames) return this.cached[1];
+    const chroma = acc.chroma();
+    const found = estimateKey(chroma);
+    const result = found && { ...found, chroma: Array.from(chroma, v => Math.round(v * 10000) / 10000) };
+    this.cached = [acc.frames, result];
+    return result;
+  }
+}
+
 /** Records the low-end energy of the decks it watches, stamped with each deck's media time */
 export class BeatWatcher {
   constructor(normalizer) {
     this.norm = normalizer;
     this.watched = new Map(); // <audio> → [{ t, v }]
     this.grids = new WeakMap();
+    this.keys = new Map();  // <audio> → KeyListener: decks whose song's key is being learned
+    this.vocals = new Map(); // <audio> → VocalRecorder: decks whose song's singing is being mapped (vocals.js)
     this.timer = null;
   }
 
@@ -34,9 +99,23 @@ export class BeatWatcher {
     if (!this.timer) this.timer = setInterval(() => this.poll(), POLL_MS);
   }
 
+  /** Learn the key of the song on this deck while it is watched (null stops) */
+  listenForKey(audio, listener) {
+    if (listener) this.keys.set(audio, listener);
+    else this.keys.delete(audio);
+  }
+
+  /** Map the singing of the song on this deck while it is watched (null stops) */
+  listenForVocals(audio, recorder) {
+    if (recorder) this.vocals.set(audio, recorder);
+    else this.vocals.delete(audio);
+  }
+
   unwatch(audio) {
     this.watched.delete(audio);
     this.grids.delete(audio);
+    this.keys.delete(audio);
+    this.vocals.delete(audio);
     if (!this.watched.size && this.timer) { clearInterval(this.timer); this.timer = null; }
   }
 
@@ -54,6 +133,8 @@ export class BeatWatcher {
         this.grids.delete(audio);
       }
       samples.push({ t, v: energy.low, h: energy.high, f: energy.full });
+      this.keys.get(audio)?.sample(audio, this.norm);
+      this.vocals.get(audio)?.sample(audio, this.norm);
       if (samples[0].t < t - KEEP_SECONDS - 5) {
         const keep = samples.findIndex(s => s.t >= t - KEEP_SECONDS);
         samples.splice(0, keep);
@@ -136,11 +217,28 @@ export function matchTempo(gridOut, gridIn, maxStretch = 0.08) {
   if (!match) return null;
   const gridIn2 = Object.assign({}, gridIn, { bpm: match.bpmIn, period: 60 / match.bpmIn,
     offset: gridIn.downbeat ?? gridIn.offset });
-  return { ratio: match.ratio, gridOut, gridIn: gridIn2 };
+  // both songs' bar 1 is known and the match keeps the beat length (no half/double-time): bars can line up too
+  const bars = gridOut.phrase && gridIn.phrase && Number.isFinite(gridOut.downbeat) && Number.isFinite(gridIn.downbeat) &&
+    Math.abs(gridIn2.period / gridIn.period - 1) < 0.02;
+  return { ratio: match.ratio, gridOut, gridIn: gridIn2, ...(bars ? { bars: true } : {}) };
 }
 
-/** Where the incoming song should start (at or after `from`) so it lands in phase with the outgoing song now */
+const wrap1 = (x) => x - Math.floor(x);
+
+/**
+ * Where the incoming song should start (at or after `from`) so it lands in phase with the outgoing song now:
+ * on the same beat, and on the same beat of the bar when both songs' downbeats are known (match.bars),
+ * so bar 1 meets bar 1 and the phrases line up.
+ */
 export function alignedStart(match, outgoingTime, from) {
+  if (match.bars) {
+    const barOut = 4 * match.gridOut.period, barIn = 4 * match.gridIn.period;
+    const want = wrap1((outgoingTime - match.gridOut.downbeat) / barOut);
+    const have = wrap1((from - match.gridIn.downbeat) / barIn);
+    let shift = want - have;
+    if (shift < 0) shift += 1;
+    return from + (shift > 1 - 1e-6 ? 0 : shift) * barIn;
+  }
   const want = beats.beatPhase(match.gridOut, outgoingTime);
   const have = beats.beatPhase(match.gridIn, from);
   let shift = want - have;
@@ -151,21 +249,91 @@ export function alignedStart(match, outgoingTime, from) {
 export const MAX_MIX_SECONDS = 24;
 /**
  * How many media seconds the mix should last at this tempo: the longest of 64, 32 or 16 beats that
- * fits in 24 s, times the learned length factor (kept to whole 8-beat phrases).
+ * fits in 24 s (`max`: a filter fade allows longer), times the learned length factor (kept to whole 8-beat phrases).
  */
-export function mixSeconds(grid, rate = 1, factor = 1) {
-  if (!grid) return Math.min(MAX_MIX_SECONDS, Math.max(4, 8 * factor)) * rate;
+export function mixSeconds(grid, rate = 1, factor = 1, max = MAX_MIX_SECONDS) {
+  if (!grid) return Math.min(max, Math.max(4, 8 * factor)) * rate;
   const beat = grid.period / rate;
-  const n = [64, 32, 16].find(beats => beats * beat <= MAX_MIX_SECONDS) || 16;
+  const n = [64, 32, 16].find(beats => beats * beat <= max) || 16;
   const scaled = Math.max(8, Math.round(n * factor / 8) * 8);
-  return Math.min(MAX_MIX_SECONDS, Math.max(4, scaled * beat)) * rate;
+  return Math.min(max, Math.max(4, scaled * beat)) * rate;
 }
 
-/** A memory entry's beat grid in the shape beats.js uses, or null when it isn't trusted */
+/** A memory entry's beat grid in the shape beats.js uses, or null when it isn't trusted. `phrase` marks a downbeat that was really heard (the first sustained drums), not just the first beat line. */
 export function memoryGrid(entry) {
   if (!entry || !(entry.period > 0) || !Number.isFinite(entry.offset) || !(entry.confidence >= 0.25)) return null;
   return { bpm: entry.bpm || 60 / entry.period, period: entry.period, offset: entry.offset, confidence: entry.confidence,
-    downbeat: entry.downbeat ?? entry.offset };
+    downbeat: entry.downbeat ?? entry.offset, ...(entry.downbeat != null ? { phrase: true } : {}) };
+}
+
+const PHRASE_BARS = [32, 16, 8, 4];  // whole-phrase mix lengths (4 only where 8 would not fit the longest mix)
+const PHRASE_LINE = 8;               // mixes start on a multiple of this many bars from the song's downbeat
+const MIN_PHRASE_CONFIDENCE = 0.35;  // a shakier beat can't carry bar lines across a whole song
+export const PHRASE_LEAD = ANALYZE_SECONDS + 1; // media seconds of look-ahead the next song needs before the mix begins
+
+/**
+ * Phrase-perfect timing for an Auto mix out of a song whose grid has a known downbeat (grid.phrase):
+ * the mix starts on a bar line that is a whole number of 8-bar phrases from the downbeat, lasts 8, 16 or
+ * 32 bars (4 on very slow songs, starting on its own 4-bar lines) and ends as a phrase ends, like a DJ counting bars. Everything in media seconds.
+ *   outroStart: where the drums leave the outgoing song (when known): the mix begins at the phrase there
+ *   factor: the learned length factor (the nearest whole-phrase length to what it asks for is used)
+ * Returns { at, span, bars } or null (no downbeat, mix would be too short, start too early or too soon): then the beat-aligned timing stands.
+ */
+export function phraseMix({ grid, dur, now = 0, rate = 1, outroStart = null, factor = 1, maxSeconds = MAX_MIX_SECONDS }) {
+  if (!grid?.phrase || !(grid.period > 0) || !Number.isFinite(grid.downbeat) || !(grid.confidence >= MIN_PHRASE_CONFIDENCE) ||
+      !(dur > 0)) return null;
+  const bar = 4 * grid.period, line = PHRASE_LINE * bar, origin = grid.downbeat;
+  const want = mixSeconds(grid, rate, factor, Math.max(maxSeconds, MAX_MIX_SECONDS)) / bar; // a lower ceiling (clashing keys) keeps the usual ask
+  const fits = PHRASE_BARS.filter(bars => bars * bar <= maxSeconds * rate + 1e-6);
+  const lengths = fits.filter(bars => bars >= 8).length ? fits.filter(bars => bars >= 8) : fits.slice(-1);
+  if (!lengths.length) return null;
+  const earliest = Math.max(now + PHRASE_LEAD * rate, dur * 0.75), slack = 0.3 * rate;
+  let best = null;
+  for (const bars of lengths) {
+    const span = bars * bar, step = Math.min(PHRASE_LINE, bars) * bar; // a 4-bar mix counts its own bars
+    const first = Math.ceil((earliest - origin) / step - 1e-9), last = Math.floor((dur - span + slack - origin) / step + 1e-9);
+    for (let k = first; k <= last; k++) {
+      const at = origin + k * step, end = at + span;
+      // outro known: start where it starts (never well into its drumless part); else end where the song ends
+      const place = outroStart != null ? Math.abs(at - outroStart) / bar + (at > outroStart + bar / 2 ? 1.5 * (at - outroStart) / bar : 0)
+        : Math.max(0, dur - end) / bar;
+      // keep the length near what was asked for; a 16-bar line is a stronger phrase than an 8-bar one
+      const cost = place + 2 * Math.abs(Math.log2(bars / want)) - (k % 2 === 0 ? 0.25 : 0);
+      if (!best || cost < best.cost) best = { cost, at, span, bars, tail: dur - end };
+    }
+  }
+  // a song that doesn't end near a phrase of its own (more than a phrase or ~20 s of it would be skipped) keeps the beat-aligned timing
+  if (!best || (outroStart == null ? best.tail > Math.min(PHRASE_LINE * bar, 20 * rate) : Math.abs(best.at - outroStart) > line)) return null;
+  return { at: best.at, span: best.span, bars: best.bars };
+}
+
+export const CLASH_MIN_SECONDS = 8;  // shortest blend when the songs' keys clash and the phrase grid is not in use
+const CLASH_MIN_BARS = 8;            // ...and when it is
+
+/**
+ * Songs in clashing keys sound worst while both play their melodies, so the blend gets half as long (the
+ * bass/mid hand-over, set by the player, keeps the overlap thin). A DJ would shift the pitch, but the
+ * playback rate here is what beat-locks the two songs; changing it would change the tempo, so the
+ * key is never shifted.
+ * `span` and `phrase` are the planned mix (media seconds; phraseMix's result or null); the rest is what
+ * phraseMix was given. Returns { span, phrase } for the shorter plan (phrase null when the mix isn't on
+ * the phrase grid), or null when it is already as short as it may be.
+ */
+export function shortenForClash({ span, phrase, grid, dur, now = 0, rate = 1, outroStart = null, factor = 1 }) {
+  if (phrase && grid) {
+    const bar = 4 * grid.period;
+    const bars = Math.max(CLASH_MIN_BARS, phrase.bars / 2);
+    if (bars >= phrase.bars) return null;
+    // the same search with a lower ceiling: it keeps the phrase lines and the song's own ending
+    const shorter = phraseMix({ grid, dur, now, rate, outroStart, factor, maxSeconds: bars * bar / rate + 1e-6 });
+    return shorter && shorter.span < phrase.span ? { span: shorter.span, phrase: shorter } : null;
+  }
+  const floor = CLASH_MIN_SECONDS * rate;
+  if (!(span > floor * 1.25)) return null;
+  // whole bars when the beat is known, so the mix still ends on a bar
+  const bar = grid?.period > 0 ? 4 * grid.period : 0;
+  const half = bar ? Math.max(Math.ceil(floor / bar), Math.round(span / 2 / bar)) * bar : Math.max(floor, span / 2);
+  return half < span - 1e-6 ? { span: half, phrase: null } : null;
 }
 
 /** Keeps the incoming song's beats on the outgoing song's by nudging its speed, like a DJ riding the pitch fader */

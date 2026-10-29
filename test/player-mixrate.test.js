@@ -38,7 +38,7 @@ function fixture(t, style = 'blend') {
   incoming.audio.currentTime = 75;
   outgoing.track = from; incoming.track = to;
   const ctx = { currentTime: 10 };
-  p.normalizer = { ctx, startDropCut() { return true; }, clearDropCut() {}, setFade() {}, fadeDeck() {}, holdBass() {},
+  p.normalizer = { ctx, startDropCut() { return true; }, clearDropCut() {}, clearEchoOut() {}, setFade() {}, fadeDeck() {}, holdBass() {},
     setActive() {}, startTrack() {}, holdFade() {}, setEqualizer() {} };
   t.mock.method(p, 'updateMediaSession', () => {});
   t.mock.method(p, 'saveSession', () => {});

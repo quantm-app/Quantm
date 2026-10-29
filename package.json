@@ -24,6 +24,7 @@
       "updater.js",
       "offline.js",
       "crashlog.js",
+      "import-sources.js",
       "window-snap.js",
       "discord.js",
       "src/**/*",

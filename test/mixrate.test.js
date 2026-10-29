@@ -85,6 +85,22 @@ test('hiding with nothing shown does nothing, and a window already open when it 
   assert.deepEqual(log, ['mount', 'reveal']);
 });
 
+test('destroying the control mid fade-out takes it out of the layout, and a queued frame no longer reveals it', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fading = setup();
+  fading.set(RATING); fading.frames.shift()();
+  fading.set(null);
+  fading.control.destroy();
+  assert.deepEqual(fading.log, ['mount', 'reveal', 'conceal', 'unmount']);
+  t.mock.timers.tick(FADE_MS * 2);
+  assert.deepEqual(fading.log, ['mount', 'reveal', 'conceal', 'unmount'], 'the cancelled timer does not unmount twice');
+  const early = setup();
+  early.set(RATING);
+  early.control.destroy();
+  early.frames.shift()();
+  assert.deepEqual(early.log, ['mount']);
+});
+
 test('thumbs go straight to the player, and destroy stops listening', t => {
   const { player, control, log, set } = setup();
   control.rate('good');

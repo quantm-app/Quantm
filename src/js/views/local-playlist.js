@@ -4,7 +4,9 @@ import * as api from '../api.js';
 import { h, clear, coverOf, duration } from '../dom.js';
 import { icon } from '../icons.js';
 import { player } from '../player.js';
-import { button, iconButton, hero, staticTrackList, toast, confirmDialog, promptDialog, emptyState } from '../ui.js';
+import { button, iconButton, hero, staticTrackList, toast, confirmDialog, promptDialog, emptyState, isLocked } from '../ui.js';
+import { isExternal } from '../sources.js';
+import { openSpotifyImport } from './spotify-import.js';
 
 const href = id => '#/qplaylist/' + id;
 const badge = () => h('span.qplaylist-badge', 'On this PC');
@@ -28,7 +30,7 @@ export function quantmTab(content) {
       const title = await promptDialog('New Quantm playlist', { label: 'Title', confirmLabel: 'Create' });
       if (!title) return;
       try { location.hash = href(local.create(title).id); } catch (error) { report(error); }
-    }, 'btn-primary', 'plus'), button('Import', () => input.click(), 'btn-outline'))
+    }, 'btn-primary', 'plus'), button('Import from Spotify', openSpotifyImport, 'btn-outline', 'download'), button('Import', () => input.click(), 'btn-outline'))
   ), input, grid);
   const refresh = () => {
     clear(grid);
@@ -63,9 +65,13 @@ export function render(page, params) {
   let dragging = null;
   let titleEditor = null;
   const context = { label: '', href: href(id) };
-  const tracks = () => (local.get(id)?.tracks || []).map(t => fresh.has(t.id)
-    ? fresh.get(t.id) || { ...t, unavailable: true } : t);
-  const playable = () => tracks().filter(t => !t.unavailable && !api.isProtected(t));
+  // a song whose SoundCloud copy was removed still plays when it has a backup copy somewhere else
+  const hasBackup = t => (t.alternates || []).some(a => !isLocked(a));
+  const tracks = () => (local.get(id)?.tracks || []).map(t => !fresh.has(t.id) ? t
+    : fresh.get(t.id) ? (t.alternates ? { ...fresh.get(t.id), alternates: t.alternates } : fresh.get(t.id))
+    : hasBackup(t) ? t : { ...t, unavailable: true });
+  // Bandcamp entries can only be opened on the site; protected SoundCloud ones only play in SoundCloud
+  const playable = () => tracks().filter(t => !t.unavailable && (!isLocked(t) || hasBackup(t)));
   const play = (track = null, shuffle = false) => {
     const list = playable();
     if (!list.length) return toast('No available tracks to play');
@@ -162,7 +168,8 @@ export function render(page, params) {
   refresh();
   const off = local.events.on('change', refresh);
   // Bypass the track cache to detect deleted songs. Failed batches keep snapshots.
-  const ids = (local.get(id)?.tracks || []).map(t => t.id);
+  // only SoundCloud songs can be looked up there: Audius and Bandcamp ones aren't on SoundCloud
+  const ids = (local.get(id)?.tracks || []).filter(t => !isExternal(t)).map(t => t.id);
   (async () => {
     let failed = false;
     for (let i = 0; i < ids.length && alive; i += 50) {

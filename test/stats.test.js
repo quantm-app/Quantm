@@ -375,3 +375,36 @@ test('formatListening and formatTime pick readable units', () => {
   assert.equal(formatTime(5400), '1.5 hours');
   assert.equal(formatTime(120), '2 min');
 });
+
+test('Audius and Bandcamp plays keep what is needed to replay them, bounded and validated', () => {
+  const data = emptyStats();
+  const audius = track(4503599627370501, { source: 'audius', sourceId: 'AbC123', duration: 187000.4 });
+  addPlay(data, audius, NOW);
+  addPlay(data, audius, NOW + 1000);
+  addPlay(data, track(4503599627370502, { source: 'bandcamp', sourceId: 'bc1' }), NOW);
+  const entry = data.tracks[4503599627370501];
+  assert.equal(entry.plays, 2);
+  assert.equal(entry.source, 'audius');
+  assert.equal(entry.sourceId, 'AbC123');
+  assert.equal(entry.duration, 187000);
+  assert.equal(entry.title, 'Track 4503599627370501');
+  assert.equal(data.tracks[4503599627370502].source, 'bandcamp');
+  assert.equal(topTracks(data, 'all', 5, NOW)[0].sourceId, 'AbC123');
+
+  // SoundCloud tracks stay as they were; junk or oversized source data is not kept
+  addPlay(data, track(1), NOW);
+  assert.ok(!('source' in data.tracks[1]) && !('sourceId' in data.tracks[1]));
+  addPlay(data, track(2, { source: 'audius', sourceId: 'x'.repeat(500), duration: 5 }), NOW);
+  addPlay(data, track(3, { source: 'audius', sourceId: { a: 1 }, duration: 5 }), NOW);
+  addPlay(data, track(4, { source: 'napster', sourceId: 'n1' }), NOW);
+  addPlay(data, track(5, { source: 'audius', sourceId: 'ok5', duration: -3 }), NOW);
+  for (const id of [2, 3, 4]) assert.ok(!('sourceId' in data.tracks[id]), String(id));
+  assert.equal(data.tracks[5].duration, 0);
+
+  // a song stored before these fields existed gets them on its next play
+  const before = emptyStats();
+  addPlay(before, track(9), NOW);
+  addPlay(before, track(9, { source: 'audius', sourceId: 'late9', duration: 100 }), NOW);
+  assert.equal(before.tracks[9].sourceId, 'late9');
+  assert.equal(before.tracks[9].plays, 2);
+});

@@ -3,6 +3,7 @@ import { h, clear, compact, duration, timeAgo, artwork, coverOf, onNearBottom } 
 import { icon } from './icons.js';
 import * as localPlaylists from './local-playlists.js';
 import { offline } from './offline.js';
+import { isExternal, isExternalId, isBandcamp, sourceLabel } from './sources.js';
 import { getCues, addCue, removeCue, renameCue, setMixIn, setMixOut, cueEvents, getPair, setPair, transitionFor } from './cues.js';
 import { formatCueTime, parseCueTime } from './cue-time.js';
 import { settings } from './store.js'; // only read when a menu opens, so the store <-> ui import cycle is safe
@@ -43,8 +44,9 @@ function onRemoved(el, cleanup) {
 // ---------------------------------------------------------------------------
 
 export const go = (hash) => { location.hash = hash; };
-export const userHref = (user) => '#/user/' + user.id;
-export const trackHref = (track) => '#/track/' + track.id;
+// Audius and Bandcamp songs have no SoundCloud page: null leaves a link without an address
+export const userHref = (user) => isExternalId(user.id) ? null : '#/user/' + user.id;
+export const trackHref = (track) => isExternal(track) || isExternalId(track.id) ? null : '#/track/' + track.id;
 export const playlistHref = (playlist) =>
   playlist.kind === 'system-playlist' ? '#/station/' + encodeURIComponent(playlist.urn) : '#/playlist/' + playlist.id;
 
@@ -83,6 +85,7 @@ export function button(label, onclick, cls = '', iconName = null) {
 
 /** Shared row / track-page control. The main process verifies artist permission. */
 export function downloadButton(track, { labeled = false } = {}) {
+  if (isExternal(track)) return null;
   if (!(_api?.isDownloadable?.(track) || offline.has(track.id))) return null;
   const btn = h('button.' + (labeled ? 'btn' : 'icon-btn') + '.download-btn', {
     onclick: (e) => { e.stopPropagation(); downloadAction(track); }
@@ -151,6 +154,7 @@ export function offlineTrackList(tracks) {
 
 /** Heart that stays in sync with the store everywhere it appears */
 export function likeButton(item, { withCount = false, cls = '' } = {}) {
+  if (isExternal(item)) return null; // likes are SoundCloud's
   const btn = h('button.icon-btn.like-btn' + (cls ? '.' + cls : ''), { title: 'Like' });
   const render = () => {
     const liked = store().isLiked(item);
@@ -164,7 +168,8 @@ export function likeButton(item, { withCount = false, cls = '' } = {}) {
     const was = store().isLiked(item);
     if (item.likes_count != null) item.likes_count += was ? -1 : 1;
     render();
-    await store().toggleLike(item);
+    // the store puts the heart back and says so when the request fails: undo the count as well
+    if (await store().toggleLike(item) === was && item.likes_count != null) { item.likes_count += was ? 1 : -1; render(); }
   });
   watchStore(btn, render);
   render();
@@ -172,6 +177,7 @@ export function likeButton(item, { withCount = false, cls = '' } = {}) {
 }
 
 export function repostButton(item, { withCount = false } = {}) {
+  if (isExternal(item)) return null;
   const btn = h('button.icon-btn.repost-btn', { title: 'Repost' });
   const render = () => {
     const on = store().isReposted(item);
@@ -186,7 +192,7 @@ export function repostButton(item, { withCount = false } = {}) {
     const was = store().isReposted(item);
     if (item.reposts_count != null) item.reposts_count += was ? -1 : 1;
     render();
-    await store().toggleRepost(item);
+    if (await store().toggleRepost(item) === was && item.reposts_count != null) { item.reposts_count += was ? 1 : -1; render(); }
   });
   watchStore(btn, render);
   render();
@@ -383,7 +389,8 @@ export function waveform(track, { height = 60, onPlay, comments = null } = {}) {
     } else {
       const start = onPlay ? onPlay() : p.playTrack(track);
       Promise.resolve(start).then(() => {
-        p.audio.addEventListener('loadedmetadata', () => p.seek(fraction * p.duration), { once: true });
+        // only if this song is still the one loading (the user may have started another meanwhile)
+        p.audio.addEventListener('loadedmetadata', () => { if (p.current && p.current.id === track.id) p.seek(fraction * p.duration); }, { once: true });
       });
     }
   });
@@ -429,15 +436,28 @@ export function waveform(track, { height = 60, onPlay, comments = null } = {}) {
 // ---------------------------------------------------------------------------
 
 export const LOCKED_HINT = "Copy-protected by the label: Quantm can't play this song. Use Open in SoundCloud to play it there.";
+export const BANDCAMP_HINT = "Quantm can't play Bandcamp songs. Use Open on Bandcamp to listen there.";
 
-/** Label-protected songs only play in SoundCloud's own app */
+/** Songs Quantm can't stream: label-protected ones (SoundCloud's own app plays them) and Bandcamp entries */
 export function isLocked(track) {
-  return !!(_api && _api.isProtected && _api.isProtected(track));
+  return isBandcamp(track) || !!(_api && _api.isProtected && _api.isProtected(track));
 }
 
+export const lockedHint = (track) => isBandcamp(track) ? BANDCAMP_HINT : LOCKED_HINT;
+/** "Open on Bandcamp" / "Open in SoundCloud" */
+export const openLabel = (track) => isBandcamp(track) ? 'Open on Bandcamp' : sourceLabel(track) === 'Audius' ? 'Open on Audius' : 'Open in SoundCloud';
+
+/** Opens the song's own page, whichever site it is from */
 export function openInSoundCloud(track) {
   if (track && track.permalink_url) window.native.openExternal(track.permalink_url);
 }
+
+/** A small "Audius" / "Bandcamp" tag for songs that aren't from SoundCloud, nothing for SoundCloud ones */
+export function sourceBadge(track) {
+  return isExternal(track) ? h('span.source-badge.source-' + track.source, { title: `This copy is from ${sourceLabel(track)}` }, sourceLabel(track)) : null;
+}
+
+const userLink = (user, cls) => isExternalId(user.id) ? h('span.' + cls.split(' ').join('.'), user.username) : link(userHref(user), user.username, cls);
 
 /**
  * A row in a track list. tracks + index give it a play queue.
@@ -450,16 +470,17 @@ export function trackRow(tracks, index, opts = {}) {
   const locked = isLocked(track);
   if (locked) {
     row.classList.add('protected');
-    row.title = LOCKED_HINT;
+    row.title = lockedHint(track);
   }
   const cover = h('div.track-art', { style: { backgroundImage: coverOf(track, 't300x300') ? `url("${coverOf(track, 't300x300')}")` : '' } },
     h('div.track-art-overlay', icon('play', 18)));
 
   const meta = h('div.track-meta',
     h('a.track-title', { href: trackHref(track), onclick: (e) => e.stopPropagation() },
-      locked ? h('span.track-lock', icon('lock', 12)) : null, track.title),
+      locked ? h('span.track-lock', icon(isBandcamp(track) ? 'external' : 'lock', 12)) : null, track.title),
     h('div.track-sub',
-      track.user ? link(userHref(track.user), track.user.username, 'muted') : null,
+      track.user ? userLink(track.user, 'muted') : null,
+      sourceBadge(track),
       opts.reason ? h('span.track-reason', opts.reason) : null
     )
   );
@@ -471,7 +492,7 @@ export function trackRow(tracks, index, opts = {}) {
 
   const actions = h('div.track-actions',
     locked && track.permalink_url
-      ? iconButton('external', 'Open in SoundCloud', (e) => { e.stopPropagation(); openInSoundCloud(track); }, 'track-open-sc')
+      ? iconButton('external', openLabel(track), (e) => { e.stopPropagation(); openInSoundCloud(track); }, 'track-open-sc')
       : null,
     downloadButton(track),
     likeButton(track),
@@ -941,26 +962,29 @@ export function closeMenus() {
 
 export function trackMenu(track, event, opts = {}) {
   const p = player();
+  const external = isExternal(track);
+  const locked = isBandcamp(track); // can't be played here, only opened
   menu([
-    (offline.has(track.id) || _api?.isDownloadable?.(track)) ? {
+    !external && (offline.has(track.id) || _api?.isDownloadable?.(track)) ? {
       label: offline.isDownloading(track.id) ? 'Cancel download' : offline.has(track.id) ? 'Remove download' : 'Download for offline',
       icon: offline.has(track.id) ? 'checkCircle' : 'download', onclick: () => downloadAction(track)
     } : null,
-    { label: 'Play next', icon: 'next', onclick: () => p.playNext(track) },
-    { label: 'Add to queue', icon: 'queue', onclick: () => p.addToQueue(track) },
-    opts.tracks && settings.autoMix ? { label: 'Mix from here', icon: 'mixOrder', onclick: () => p.mixFrom(opts.tracks, opts.index, opts.context || null) } : null,
-    { label: 'Mix points…', onclick: () => mixPointsDialog(track) },
-    { label: 'Add to playlist', icon: 'addToPlaylist', onclick: () => addToPlaylistDialog(track) },
-    { label: 'Add to Quantm playlist', icon: 'playlist', onclick: () => addToPlaylistDialog(track) },
+    !locked ? { label: 'Play next', icon: 'next', onclick: () => p.playNext(track) } : null,
+    !locked ? { label: 'Add to queue', icon: 'queue', onclick: () => p.addToQueue(track) } : null,
+    !locked && opts.tracks && settings.autoMix ? { label: 'Mix from here', icon: 'mixOrder', onclick: () => p.mixFrom(opts.tracks, opts.index, opts.context || null) } : null,
+    !locked ? { label: 'Mix points…', onclick: () => mixPointsDialog(track) } : null,
+    // the SoundCloud playlists need a SoundCloud song, so for the others this only offers Quantm playlists
+    { label: external ? 'Add to Quantm playlist' : 'Add to playlist', icon: 'addToPlaylist', onclick: () => addToPlaylistDialog(track) },
+    !external ? { label: 'Add to Quantm playlist', icon: 'playlist', onclick: () => addToPlaylistDialog(track) } : null,
     track.station_urn ? { label: 'Start station', icon: 'station', onclick: () => go('#/station/' + encodeURIComponent(track.station_urn)) } : null,
+    !external ? 'separator' : null,
+    !external ? { label: store().isLiked(track) ? 'Unlike' : 'Like', icon: 'heart', onclick: () => store().toggleLike(track) } : null,
+    !external ? { label: store().isReposted(track) ? 'Remove repost' : 'Repost', icon: 'repost', onclick: () => store().toggleRepost(track) } : null,
     'separator',
-    { label: store().isLiked(track) ? 'Unlike' : 'Like', icon: 'heart', onclick: () => store().toggleLike(track) },
-    { label: store().isReposted(track) ? 'Remove repost' : 'Repost', icon: 'repost', onclick: () => store().toggleRepost(track) },
-    'separator',
-    { label: 'Go to track', icon: 'feed', onclick: () => go(trackHref(track)) },
-    track.user ? { label: 'Go to artist', icon: 'user', onclick: () => go(userHref(track.user)) } : null,
-    { label: 'Copy link', icon: 'link', onclick: () => { window.native.copy(track.permalink_url); toast('Link copied'); } },
-    { label: 'Open on SoundCloud', icon: 'external', onclick: () => window.native.openExternal(track.permalink_url) },
+    !external ? { label: 'Go to track', icon: 'feed', onclick: () => go(trackHref(track)) } : null,
+    track.user && !isExternalId(track.user.id) ? { label: 'Go to artist', icon: 'user', onclick: () => go(userHref(track.user)) } : null,
+    track.permalink_url ? { label: 'Copy link', icon: 'link', onclick: () => { window.native.copy(track.permalink_url); toast('Link copied'); } } : null,
+    track.permalink_url ? { label: external ? openLabel(track) : 'Open on SoundCloud', icon: 'external', onclick: () => window.native.openExternal(track.permalink_url) } : null,
     ...(opts.menuItems ? ['separator', ...opts.menuItems(track)] : [])
   ], event);
 }
@@ -1069,14 +1093,17 @@ export function mixPointsDialog(track) {
   onRemoved(dialog, off);
 }
 
+const openModals = []; // newest last: Escape closes only the top one
 export function modal(title, body, { wide = false, onClose } = {}) {
   const close = () => {
     overlay.classList.remove('show');
     document.removeEventListener('keydown', onKey);
+    const at = openModals.indexOf(overlay);
+    if (at !== -1) openModals.splice(at, 1);
     setTimeout(() => overlay.remove(), 200);
     if (onClose) onClose();
   };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const onKey = (e) => { if (e.key === 'Escape' && openModals[openModals.length - 1] === overlay) close(); };
   const overlay = h('div.modal-overlay', { onclick: (e) => { if (e.target === overlay) close(); } },
     h('div.modal' + (wide ? '.wide' : ''),
       h('div.modal-head', h('h2', title), iconButton('close', 'Close', close)),
@@ -1084,6 +1111,7 @@ export function modal(title, body, { wide = false, onClose } = {}) {
     )
   );
   document.body.appendChild(overlay);
+  openModals.push(overlay);
   document.addEventListener('keydown', onKey);
   requestAnimationFrame(() => overlay.classList.add('show'));
   overlay.close = close;
@@ -1124,6 +1152,7 @@ export function promptDialog(title, { label = '', value = '', placeholder = '', 
  */
 export async function addToPlaylistDialog(track) {
   if (!track) return;
+  const external = isExternal(track);
   const localList = h('div.atp-list');
   const renderLocal = () => {
     clear(localList);
@@ -1175,10 +1204,11 @@ export async function addToPlaylistDialog(track) {
       h('div', h('div.strong', track.title), h('div.muted.small', track.user ? track.user.username : ''))),
     h('h3', 'Quantm playlists (on this PC)'),
     localList, newLocal,
-    h('h3', 'SoundCloud playlists'),
-    filter,
-    listEl,
-    h('div.atp-create',
+    // Audius and Bandcamp songs can't go into SoundCloud playlists
+    external ? null : h('h3', 'SoundCloud playlists'),
+    external ? null : filter,
+    external ? null : listEl,
+    external ? null : h('div.atp-create',
       h('div.field-label', 'Create a new playlist'),
       h('div.atp-create-row', titleInput, createBtn),
       h('label.checkbox', privateBox, ' Make it private')
@@ -1186,6 +1216,7 @@ export async function addToPlaylistDialog(track) {
   ));
 
   onRemoved(dialog, offLocal);
+  if (external) return;
 
   let playlists;
   try {
@@ -1225,7 +1256,9 @@ export async function addToPlaylistDialog(track) {
           toast(already ? `Removed from "${pl.title}"` : `Added to "${pl.title}"`);
           store().emit('playlists');
         } catch (e) {
-          toast("Couldn't update the playlist", 'error');
+          toast(e && e.data && e.data.error === 'human_check'
+            ? "SoundCloud's human check wasn't completed, so the playlist didn't change"
+            : "Couldn't update the playlist", 'error');
         }
         row.disabled = false;
         render();

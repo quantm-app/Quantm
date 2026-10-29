@@ -5,7 +5,7 @@ import { installBrowser, resizeObservers } from './helpers/browser.js';
 installBrowser();
 const { Emitter } = await import('../src/js/dom.js');
 const { cueEvents, addCue, setMixIn, setMixOut, _reset } = await import('../src/js/cues.js');
-const { bindServices, waveform, playButton, trackRow, downloadButton, offlineTrackList } = await import('../src/js/ui.js');
+const { bindServices, waveform, playButton, trackRow, downloadButton, offlineTrackList, likeButton, repostButton, modal } = await import('../src/js/ui.js');
 const { offline } = await import('../src/js/offline.js');
 const { isDownloadable } = await import('../src/js/api.js');
 const player = Object.assign(new Emitter(), { current: null, playing: false });
@@ -156,4 +156,60 @@ test('waveform markers update for their song and cue clicks seek to the exact me
   player.current = null;
   await Promise.resolve();
   _reset();
+});
+
+test('a like or repost that fails gives the count back', async () => {
+  const item = { id: 5, kind: 'track', likes_count: 10, reposts_count: 3, user: { id: 9 } };
+  store.me = { id: 1 };
+  const like = likeButton(item, { withCount: true });
+  const repost = repostButton(item, { withCount: true });
+  store.toggleLike = async () => false; // the request failed: the store reports the heart is still off
+  store.toggleRepost = async () => false;
+  await like.dispatchEvent({ type: 'click', stopPropagation() {} });
+  await repost.dispatchEvent({ type: 'click', stopPropagation() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(item.likes_count, 10);
+  assert.equal(item.reposts_count, 3);
+  store.toggleLike = async () => true; // it worked
+  like.dispatchEvent({ type: 'click', stopPropagation() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(item.likes_count, 11);
+});
+
+test('Escape closes only the newest dialog', () => {
+  const outer = modal('Outer', document.createElement('div'));
+  const inner = modal('Inner', document.createElement('div'));
+  const hidden = [];
+  outer.classList.remove = () => hidden.push('outer');
+  inner.classList.remove = () => hidden.push('inner');
+  document.dispatchEvent({ type: 'keydown', key: 'Escape' });
+  assert.deepEqual(hidden, ['inner']);
+  hidden.length = 0;
+  document.dispatchEvent({ type: 'keydown', key: 'Escape' });
+  assert.deepEqual(hidden, ['outer']);
+});
+
+test('a waveform click on a song that is not playing seeks it only if it is still the song that loads', async () => {
+  const audio = new Audio();
+  const seeks = [];
+  const saved = { audio: player.audio, seek: player.seek, playTrack: player.playTrack, duration: player.duration };
+  Object.assign(player, { audio, duration: 100, seek: t => seeks.push(t), playTrack: async () => {} });
+  const wave = waveform(tracks[0]);
+  document.body.append(wave);
+  const click = async () => {
+    player.current = null;
+    wave.dispatchEvent({ type: 'click', stopPropagation() {}, clientX: 0 });
+    await Promise.resolve(); await Promise.resolve();
+  };
+  await click();
+  player.current = { id: 999 }; // the user started another song before the first one's metadata arrived
+  audio.dispatchEvent({ type: 'loadedmetadata' });
+  assert.deepEqual(seeks, []);
+  await click();
+  player.current = tracks[0];
+  audio.dispatchEvent({ type: 'loadedmetadata' });
+  assert.equal(seeks.length, 1);
+  wave.remove();
+  Object.assign(player, saved);
+  player.current = null;
 });

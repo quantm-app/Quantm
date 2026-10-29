@@ -222,6 +222,7 @@ function mountShell() {
     try {
       const data = await api.searchSuggestions(q);
       clear(suggestions);
+      active = -1;
       (data.collection || []).forEach((s) => {
         suggestions.append(h('button.suggest-item', { type: 'button', onmousedown: (e) => { e.preventDefault(); submitSearch(s.output || s.query); } },
           icon('search', 14), h('span', s.output || s.query)));
@@ -235,6 +236,7 @@ function mountShell() {
     const items = [...suggestions.querySelectorAll('.suggest-item')];
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
+      if (!items.length) { active = -1; return; } // modulo by zero would leave active as NaN for good
       active = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
       items.forEach((el, i) => el.classList.toggle('active', i === active));
       if (items[active]) searchInput.value = items[active].textContent;

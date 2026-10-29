@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { installBrowser } from './helpers/browser.js';
 
 installBrowser();
-const { compact, duration, timeAgo, artwork, coverOf, escapeHtml, linkify, Emitter } = await import('../src/js/dom.js');
+const { compact, duration, timeAgo, artwork, coverOf, escapeHtml, linkify, sliderKey, Emitter } = await import('../src/js/dom.js');
 
 test('compact formats counts at each magnitude and missing values', () => {
   for (const [input, expected] of [[null, ''], [undefined, ''], [0, '0'], [999, '999'], [1000, '1K'], [1500, '1.5K'], [125000, '125K'], [1000000, '1M'], [1500000, '1.5M'], [12000000, '12M'], [1000000000, '1B'], [1250000000, '1.3B'], [12000000000, '12B']]) {
@@ -49,4 +49,18 @@ test('Emitter unsubscribe stops future deliveries', () => {
   off();
   emitter.emit('change', 2);
   assert.deepEqual(seen, [1]);
+});
+
+test('sliderKey moves by arrows and pages, jumps with Home and End, stays in range and ignores other keys', () => {
+  assert.equal(sliderKey('ArrowRight', 50, 0, 100, 5), 55);
+  assert.equal(sliderKey('ArrowUp', 50, 0, 100, 5), 55);
+  assert.equal(sliderKey('ArrowLeft', 50, 0, 100, 5), 45);
+  assert.equal(sliderKey('ArrowDown', 50, 0, 100, 5), 45);
+  assert.equal(sliderKey('PageUp', 50, 0, 100, 5, 30), 80);
+  assert.equal(sliderKey('PageDown', 50, 0, 100, 5), 20);
+  assert.equal(sliderKey('Home', 50, 0, 100, 5), 0);
+  assert.equal(sliderKey('End', 50, 0, 100, 5), 100);
+  assert.equal(sliderKey('ArrowLeft', 2, 0, 100, 5), 0);
+  assert.equal(sliderKey('ArrowRight', 98, 0, 100, 5), 100);
+  for (const key of ['a', ' ', 'Enter', 'Tab', 'constructor', 'toString']) assert.equal(sliderKey(key, 50, 0, 100, 5), null);
 });

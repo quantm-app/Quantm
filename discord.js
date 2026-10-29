@@ -20,6 +20,7 @@ let connecting = false;
 let enabled = true;
 let lastActivity = null;   // re-sent after (re)connecting
 let retryTimer = null;
+let disconnectTimer = null; // the delayed close after turning it off
 
 function pipePath(i) {
   if (process.platform === 'win32') return `\\\\?\\pipe\\discord-ipc-${i}`;
@@ -180,8 +181,12 @@ function setEnabled(on) {
     lastActivity = null;
     clearTimeout(retryTimer);
     retryTimer = null;
-    setTimeout(disconnect, 200);
+    clearTimeout(disconnectTimer);
+    disconnectTimer = setTimeout(disconnect, 200);
   } else {
+    // turned back on before the delayed close ran: keep the connection instead of killing it
+    clearTimeout(disconnectTimer);
+    disconnectTimer = null;
     connect();
   }
 }

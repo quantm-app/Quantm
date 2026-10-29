@@ -140,6 +140,9 @@ html[data-style="twin-deck"] .td-phase-pointer::before { content: ""; position: 
 html[data-style="twin-deck"][data-lock="locked"] .td-console[data-locked="true"] .td-phase-ring { border-color: var(--td-green); }
 html[data-style="twin-deck"][data-lock="locked"] .td-console[data-locked="true"] :is(.td-lock-state, .td-phase-ring::after) { color: var(--td-green); }
 html[data-style="twin-deck"] .td-console[data-locked="true"] .td-phase-dial { animation-play-state: paused; opacity: .35; }
+/* a drop cut doesn't beat-lock: park the phase dial and pointer instead of showing drift */
+html[data-style="twin-deck"] .td-console[data-style="dropcut"] .td-phase-dial { animation-play-state: paused; opacity: .35; }
+html[data-style="twin-deck"] .td-console[data-style="dropcut"] .td-phase-pointer { opacity: .3; }
 html[data-style="twin-deck"] .td-lock-state { font: 600 13px var(--td-mono); color: var(--text); }
 html[data-style="twin-deck"] .td-phase-error { color: var(--muted); font: 10px/1.5 var(--td-mono); margin: 7px 0 26px; }
 html[data-style="twin-deck"] .td-beats { display: grid; grid-template-columns: repeat(4, 1fr); position: relative; gap: 5px; width: 112px; margin-top: 9px; }
@@ -153,7 +156,7 @@ html[data-style="twin-deck"] .td-crossfader-module { width: 100%; margin-top: au
 html[data-style="twin-deck"] .td-crossfader-labels { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font: 9px var(--td-mono); margin-bottom: 12px; }
 html[data-style="twin-deck"] .td-crossfader { height: 36px; padding: 12px 0; }
 html[data-style="twin-deck"] .td-crossfader-rail { position: relative; height: 6px; background: var(--bg); border: 1px solid var(--td-metal); border-radius: 4px; }
-html[data-style="twin-deck"] .td-crossfader-handle { position: absolute; top: -10px; left: calc((100% - 24px) * var(--mix, 0)); width: 24px; height: 24px; border: 1px solid var(--td-metal); border-radius: 2px; background: linear-gradient(90deg, #35414c 45%, #b0bcc8 45% 55%, #35414c 55%); box-shadow: 0 2px 5px #0007; }
+html[data-style="twin-deck"] .td-crossfader-handle { position: absolute; top: -10px; left: calc((100% - 24px) * var(--td-xfade, var(--mix, 0))); width: 24px; height: 24px; border: 1px solid var(--td-metal); border-radius: 2px; background: linear-gradient(90deg, #35414c 45%, #b0bcc8 45% 55%, #35414c 55%); box-shadow: 0 2px 5px #0007; }
 html[data-style="twin-deck"] .td-auto-note { color: var(--muted); font: 8px/1.5 var(--td-mono); letter-spacing: .02em; margin-top: 10px; }
 html[data-style="twin-deck"] .td-console-foot { display: flex; justify-content: space-between; gap: 8px; padding: 14px 2px 0; font: 9px/1.5 var(--td-mono); letter-spacing: .06em; color: var(--muted); }
 html[data-style="twin-deck"] .td-console[data-auto="off"] .td-deck-b :is(.td-platter-rim, .td-pitch, .td-knob, .td-led) { opacity: .35; }

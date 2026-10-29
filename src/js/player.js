@@ -6,12 +6,22 @@ import { Emitter, artwork } from './dom.js';
 import { store, settings, saveSettings } from './store.js';
 import { toast } from './ui.js';
 import { Normalizer } from './normalizer.js';
-import { BeatWatcher, BeatLock, ANALYZE_SECONDS, ANALYZE_MAX_SECONDS, MAX_MIX_SECONDS, matchTempo, alignedStart, mixSeconds, memoryGrid } from './automix.js';
+import { BeatWatcher, BeatLock, KeyListener, ANALYZE_SECONDS, ANALYZE_MAX_SECONDS, MAX_MIX_SECONDS, matchTempo, alignedStart, mixSeconds, memoryGrid, phraseMix, shortenForClash, PHRASE_LEAD } from './automix.js';
+import { mergeKey, camelot, keyName } from './keys.js';
+import { VocalRecorder, VocalMap, VOCAL_LEVEL, mergeVocals, planVocalClash } from './vocals.js';
+import { usableBlend, findCleanBar, loopPlanFor, echoPlan, chooseEnding } from './endings.js';
+import { BarLooper, bufferedCovers } from './barloop.js';
 import * as mixmemory from './mixmemory.js';
 import * as mixlearn from './mixlearn.js';
 import * as mixorder from './mixorder.js';
+import * as mixpairs from './mixpairs.js';
 import { phaseError, inspectDrop, tempoOptions, orientGrid } from './beats.js';
-import { planStyle, futureWindow, rollSchedule, dropPhase } from './dropcut.js';
+import { planStyle, futureWindow, rollSchedule, dropPhase, confident } from './dropcut.js';
+import { genreTransition, mellowHint, doubleDropPlan, quickCutOptions, QUICK_CUT_BEATS, FILTER_MAX_SECONDS } from './transitions.js';
+import { isExternal, isAudius, isBandcamp, sourceLabel, audiusStreamUrl } from './sources.js';
+
+/** The name of a transition style as the feed and the thumbs messages say it (learning keys: blend, dropcut and the genre styles) */
+const styleLabel = (style) => ({ dropcut: 'drop cut', quickcut: 'quick cut', doubledrop: 'double drop', filterfade: 'filter fade' })[style] || 'smooth blend';
 
 const mmss = (t) => { const s = Math.max(0, Math.round(t || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const quote = (track) => '"' + ((track && track.title) || 'this song').slice(0, 60) + '"';
@@ -87,7 +97,7 @@ class Player extends Emitter {
       const key = `${settings.autoMix}|${settings.transitionStyle}`;
       if (key !== this.mixSettingsKey && this.fading?.style === 'dropcut') {
         this.cutFade(); this.stopLock();
-      }
+      } else if (key !== this.mixSettingsKey) this.breakSpecialFade('the mix settings changed');
       if (key !== this.mixSettingsKey && this.prepared) {
         this.dropPreroll(this.prepared);
         this.prepared = null;
@@ -124,7 +134,35 @@ class Player extends Emitter {
     const audio = new Audio();
     audio.preload = 'auto';
     audio.crossOrigin = 'anonymous'; // needed to route progressive streams through Web Audio
-    return { audio, hls: null, track: null };
+    return { audio, hls: null, track: null, copy: null };
+  }
+
+  /** A stream that was found but won't play (file gone, site down): move on to the song's next backup copy */
+  onMediaError(deck) {
+    const track = this.current;
+    if (!track || deck.track !== track || this.loading) return;
+    const mine = this.copyOf?.track === track ? this.copyOf : null;
+    const next = this.nextCopy(track, mine ? mine.index : 0);
+    if (next === -1) {
+      // every copy is used up: same toast and move on as a stream that would not resolve (once per load)
+      if (this.failedLoadId === this.loadId) return;
+      this.failedLoadId = this.loadId;
+      this.failLoad(track, this.loadId, new Error('The media would not play'));
+      return;
+    }
+    // the backup carries on where this copy stopped: a restored position that never got seeked to, else how far it played
+    const heard = deck.audio.currentTime || 0;
+    const paused = deck.audio.paused && heard > 0; // paused by the listener, not a stream that never started
+    this.load({ autoplay: mine ? mine.autoplay && !paused : !paused, startAt: heard > 0 ? heard : (mine?.startAt || 0), fromCopy: next }).catch(() => {});
+  }
+
+  /** The copy of the current song that is actually playing: the song itself, or one of its backups (track.alternates) */
+  get playingCopy() {
+    const track = this.current;
+    if (!track) return null;
+    if (this.deck.track === track && this.deck.copy) return this.deck.copy;
+    const at = this.copyOf?.track === track ? this.copyOf.index : 0;
+    return at > 0 && track.alternates?.[at - 1] || track;
   }
 
   /** Wire a deck's media events. Only the active deck drives the UI; the fading one stays quiet. */
@@ -144,6 +182,7 @@ class Player extends Emitter {
     a.addEventListener('waiting', live(() => this.emit('buffering', true)));
     a.addEventListener('playing', live(() => this.emit('buffering', false)));
     a.addEventListener('ended', live(() => this.onEnded()));
+    a.addEventListener('error', live(() => this.onMediaError(deck)));
     a.addEventListener('seeked', live(() => { this.saveSession(); this.emit('timeline'); }));
     a.addEventListener('seeking', () => {
       if (this.deck === deck && this.mixOutcome?.mixEnd != null) this.clearMixOutcome();
@@ -151,6 +190,8 @@ class Player extends Emitter {
         this.cutFade();
         this.stopLock();
       }
+      // a delay tail cannot be rewound: a seek ends an echo-out on the spot
+      if (this.fading?.echoScheduled && (this.fading.incoming === deck || this.fading.outgoing === deck)) this.cutFade();
     });
     // a new source can reset the rate, so put it back once the media is known
     a.addEventListener('loadedmetadata', () => this.applySpeed(a));
@@ -189,9 +230,11 @@ class Player extends Emitter {
     const { rate, keepPitch } = this.speedInfo;
     const key = `${settings.speedMode}|${rate}|${keepPitch}`;
     if (key === this.speedKey) return;
-    if (this.fading?.style === 'dropcut') this.cutFade();
     this.speedKey = key;
+    // the new rate first: a loop that stops re-times the rest of the blend by how long the song has left at the speed it plays now
     this.decks.forEach(deck => this.applySpeed(deck.audio));
+    if (this.fading?.style === 'dropcut') this.cutFade();
+    else this.breakSpecialFade('the speed changed');
     if (this.lock) this.lock.setBaseRate(rate); // a beat-matched song follows the new speed too
     if (this.tempoRelease) this.tempoRelease.setBaseRate(rate);
     this.emit('speed', rate);
@@ -324,12 +367,25 @@ class Player extends Emitter {
 
   /** A downloaded file when there is one (works offline, artist's original quality), else the stream */
   async streamOf(track) {
+    // Bandcamp has no streaming Quantm can use: those entries only open on the site
+    if (isBandcamp(track)) throw Object.assign(new Error('Bandcamp songs only play on Bandcamp'), { data: 'bandcamp' });
+    if (isAudius(track)) return { url: audiusStreamUrl(track.sourceId), protocol: 'progressive', snipped: false, track };
     await offline.init();
     return offline.has(track.id) ? offline.streamFor(track.id) : api.streamFor(track);
   }
 
-  /** Load the current queue entry. autoplay=false is used when restoring the last session */
-  async load({ autoplay = true, startAt = 0 } = {}) {
+  /** The next backup copy of a song after copy `after` (0 = the song itself) that Quantm can try, or -1 */
+  nextCopy(track, after = 0) {
+    const copies = (track && track.alternates) || [];
+    for (let i = after; i < copies.length; i++) if (!isBandcamp(copies[i])) return i + 1;
+    return -1;
+  }
+
+  /**
+   * Load the current queue entry. autoplay=false is used when restoring the last session.
+   * fromCopy > 0 skips the song's own stream and starts at one of its backup copies (track.alternates).
+   */
+  async load({ autoplay = true, startAt = 0, fromCopy = 0 } = {}) {
     const track = this.current;
     if (!track) return;
     const loadId = ++this.loadId;
@@ -347,24 +403,28 @@ class Player extends Emitter {
     this.emit('buffering', true);
 
     let stream;
-    try {
-      stream = await this.streamOf(track);
-    } catch (error) {
-      if (loadId !== this.loadId) return;
-      this.loading = false;
-      this.emit('buffering', false);
-      toast(error && error.data === 'protected'
-        ? `"${track.title}" is copy-protected and only plays in SoundCloud's own app. Use Open in SoundCloud on the track.`
-        : `Can't play "${track.title}"`, 'error');
-      // skip unplayable tracks, but stop if the whole queue is unplayable
-      if (this.index < this.queue.length - 1) setTimeout(() => loadId === this.loadId && this.next(true), 800);
-      return;
+    let used = 0;
+    let failure = null;
+    // the song itself first, then its backup copies in order (a different site's copy of the same song)
+    for (let copy = fromCopy; copy !== -1 && !stream; copy = this.nextCopy(track, copy)) {
+      try {
+        stream = await this.streamOf(copy === 0 ? track : track.alternates[copy - 1]);
+        used = copy;
+      } catch (error) {
+        if (loadId !== this.loadId) return;
+        failure = failure || error;
+      }
     }
     if (loadId !== this.loadId) return;
+    if (!stream) return this.failLoad(track, loadId, failure);
 
-    Object.assign(track, stream.track);
+    this.copyOf = { track, index: used, autoplay, startAt };
+    if (used > 0) {
+      const copy = track.alternates[used - 1];
+      toast(`Played the ${sourceLabel(copy)} copy of "${track.title}" (the ${sourceLabel(track)} one is unavailable)`);
+    } else Object.assign(track, stream.track);
     if (stream.snipped) toast('Only a 30 second preview is available for this track');
-    this.attach(stream, autoplay, startAt);
+    this.attach(stream, autoplay, startAt, this.deck, track, used > 0 ? track.alternates[used - 1] : track);
     this.loading = false;
     if (!autoplay) this.emit('buffering', false);
     this.updateMediaSession();
@@ -373,7 +433,21 @@ class Player extends Emitter {
     this.saveSession();
   }
 
-  attach(stream, autoplay = true, startAt = 0, deck = this.deck, track = this.current) {
+  /** Nothing of this song will play (no stream, or every copy failed): say why, then skip on unless it is the last song */
+  failLoad(track, loadId, error) {
+    this.loading = false;
+    this.emit('buffering', false);
+    toast(error && error.data === 'protected'
+      ? `"${track.title}" is copy-protected and only plays in SoundCloud's own app. Use Open in SoundCloud on the track.`
+      : error && error.data === 'bandcamp'
+        ? `"${track.title}" only plays on Bandcamp. Use Open on Bandcamp on the track.`
+        : `Can't play "${track.title}"`, 'error');
+    // skip unplayable tracks, but stop if the whole queue is unplayable
+    if (this.index < this.queue.length - 1) setTimeout(() => loadId === this.loadId && this.next(true), 800);
+  }
+
+  /** `copy` is the upload actually playing: the queue entry's own, or one of its backups (they have their own ids) */
+  attach(stream, autoplay = true, startAt = 0, deck = this.deck, track = this.current, copy = track) {
     const sourceId = deck.sourceId = (deck.sourceId || 0) + 1;
     if (deck.metadataSeek) deck.audio.removeEventListener('loadedmetadata', deck.metadataSeek);
     deck.metadataSeek = null;
@@ -383,6 +457,7 @@ class Player extends Emitter {
     }
     const audio = deck.audio;
     deck.track = track;
+    deck.copy = copy;
     deck.snipped = !!stream.snipped;
     this.applySpeed(audio);
     if (startAt > 0) {
@@ -406,9 +481,9 @@ class Player extends Emitter {
         if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
         else if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
           // signed urls expire: re-resolve and resume where we were
-          api.streamFor(track).then((fresh) => {
+          api.streamFor(copy).then((fresh) => {
             if (deck.sourceId !== sourceId || deck.track !== track) return;
-            this.attach(fresh, this.deckInUse(deck) && !audio.paused, audio.currentTime, deck, track);
+            this.attach(fresh, this.deckInUse(deck) && !audio.paused, audio.currentTime, deck, track, copy);
           }).catch(() => toast('Playback stopped: network error', 'error'));
         }
       });
@@ -426,11 +501,14 @@ class Player extends Emitter {
     if (deck.metadataSeek) deck.audio.removeEventListener('loadedmetadata', deck.metadataSeek);
     deck.metadataSeek = null;
     this.normalizer.clearDropCut(deck.audio);
+    this.normalizer.clearEchoOut(deck.audio);
+    if (deck.filtered) { this.normalizer.clearLowpass(deck.audio); deck.filtered = false; }
     if (deck.hls) {
       deck.hls.destroy();
       deck.hls = null;
     }
     deck.track = null;
+    deck.copy = null;
     deck.audio.pause();
     deck.audio.removeAttribute('src');
     deck.audio.load();
@@ -459,7 +537,7 @@ class Player extends Emitter {
     if (!isFinite(dur) || dur <= 0) return;
     const t = this.upcomingTransition();
     const auto = this.autoMix;
-    const wantsDrop = auto && (t.style || settings.transitionStyle) !== 'blend';
+    const wantsDrop = auto && this.dropWanted(t);
     // Drop confirmation needs a region around the hint, before the outgoing build starts.
     if (this.prepared && !this.prepared.wrap && this.prepared.track && this.queue[this.index + 1] !== this.prepared.track) {
       this.dropPreroll(this.prepared);
@@ -467,6 +545,8 @@ class Player extends Emitter {
     }
     if (wantsDrop && !this.prepared) this.prepareNext();
     if (wantsDrop && this.prepared?.stream && !this.prepared.preroll) this.preroll(this.prepared);
+    // a double drop is planned long before the usual last-minute plan, and replaces it
+    if (auto && !t.custom) this.planDoubleDrop(audio, dur);
     const plan = auto && !t.custom ? this.planMix(audio, dur) : null;
     if (plan && !plan.span) return; // still listening
     const span = plan ? plan.span : t.fade * (audio.playbackRate || 1); // media seconds the fade covers
@@ -474,7 +554,7 @@ class Player extends Emitter {
     let mixAt = t.out != null && t.out < dur - 0.25 && audio.currentTime <= t.out + 3 ? t.out : null;
     if (plan) {
       if (dur < span * 2) return;
-      mixAt = dur - span;
+      mixAt = plan.at ?? dur - span; // a phrase-timed mix starts on its bar line, else it ends with the song
       this.mixAt = { loadId: this.loadId, at: mixAt };
     } else if (mixAt === null) {
       if (!t.fade) {
@@ -486,7 +566,12 @@ class Player extends Emitter {
       }
     }
     const prep = this.prepared;
-    if (auto && prep?.stream && !prep.preroll && mixAt - audio.currentTime <= AUTO_LEAD * (audio.playbackRate || 1)) this.preroll(prep);
+    // a loop or an echo-out replaced the blend's timing with a later one, but if it can't be done the plain blend
+    // still has to start at its own time: the next song is prepared, and the special ending vetted, in time for that
+    const special = !!plan && ['loop', 'echo-out'].includes(plan.ending?.kind);
+    const fallbackAt = special ? plan.base.at ?? dur - plan.base.span : mixAt;
+    if (auto && prep?.stream && !prep.preroll && Math.min(mixAt, fallbackAt) - audio.currentTime <= AUTO_LEAD * (audio.playbackRate || 1)) this.preroll(prep);
+    if (special && this.vetEnding(plan, { audio, dur, fallbackAt })) mixAt = plan.at ?? dur - plan.span;
     if (auto && prep?.stream && prep.preroll?.done) {
       const selected = this.selectMixStyle(prep, t, plan?.grid || this.outgoingGrid(audio, dur));
       if (selected.style === 'dropcut' && prep.selected?.style === 'blend') {
@@ -494,12 +579,16 @@ class Player extends Emitter {
       }
       prep.selected = selected;
       if (selected.style === 'dropcut') mixAt = selected.window.build;
-      if (plan) Object.assign(plan, { style: selected.style, reason: selected.reason });
+      if (plan) Object.assign(plan, { style: selected.style, reason: selected.reason, genre: selected.genre || null });
     }
+    // a double drop needs the next song ready to meet the drop: wait for it (the plan lapses if it never is)
+    if (plan?.doubleDrop && !(prep?.preroll?.done && prep.selected?.doubleDrop)) { if (mixAt - audio.currentTime <= 0) return; }
     this.mixAt = { loadId: this.loadId, at: mixAt };
     const until = mixAt - audio.currentTime;
     if (auto && t.custom && until < AUTO_LISTEN) this.beats.watch(audio); // custom mixes get beat-matched too
-    if (until > (auto ? (wantsDrop ? AUTO_LISTEN : AUTO_LEAD) * (audio.playbackRate || 1) : PREPARE_LEAD)) return;
+    // the look-ahead counts from the earlier of the special ending and its plain blend fallback
+    const prepareIn = special && plan.ending.kind !== 'fallback' ? Math.min(until, fallbackAt - audio.currentTime) : until;
+    if (prepareIn > (auto ? (wantsDrop ? AUTO_LISTEN : AUTO_LEAD) * (audio.playbackRate || 1) : PREPARE_LEAD)) return;
     // Auto mix was switched on or off after the look-ahead: look again the new way
     if (this.prepared && this.prepared.loadId === this.loadId && this.prepared.auto !== auto) {
       this.dropPreroll(this.prepared);
@@ -526,6 +615,8 @@ class Player extends Emitter {
     const audio = this.audio;
     const rate = audio.playbackRate || 1;
     status.memory = mixmemory.get(this.current.id, tempoOptions(this.current));
+    const key = this.keyOf(this.current);
+    if (key) status.key = { name: keyName(key), camelot: camelot(key), confidence: key.confidence, heard: this.keyHeard(this.current) };
     status.structure = this.structureOf(this.current.id);
     status.listening = this.listening.has(audio);
     if (this.beats.isWatching(audio)) {
@@ -541,7 +632,7 @@ class Player extends Emitter {
     if (f) {
       const progress = f.startedAt === null || !this.normalizer.ctx ? f.progress : Math.max(0, Math.min(1, f.progress + (this.normalizer.ctx.currentTime - f.startedAt) / f.seconds));
       status.mix = { from: f.from, to: f.to, seconds: f.seconds, progress, bass: f.bass, dj: f.shapeIn ? f.shapeIn.dj : 0,
-        style: f.style || 'blend', reason: f.reason, phase: f.schedule ? dropPhase(f.schedule, this.normalizer.ctx.currentTime) : null };
+        style: f.style || 'blend', genre: f.genre || null, variant: f.variant || null, looping: !!f.looper, reason: f.reason, phase: f.schedule ? dropPhase(f.schedule, this.normalizer.ctx.currentTime) : null };
     }
     const L = this.lock;
     if (L) {
@@ -554,9 +645,10 @@ class Player extends Emitter {
     status.shuffleMode = this.shuffleMode;
     const next = this.queue[this.index + 1];
     if (next && this.autoMix) {
-      const a = this.mixFeatures(this.current);
+      // the playing song's key includes what this play has heard so far
+      const a = { ...this.mixFeatures(this.current), key: key || null };
       const b = this.mixFeatures(next);
-      status.upNext = { track: next, bpm: b.bpm, source: b.bpmSource, reasons: mixorder.blendCost(a, b).reasons };
+      status.upNext = { track: next, bpm: b.bpm, source: b.bpmSource, reasons: mixorder.blendCost(a, b).reasons, key: mixorder.keyRelation(a, b) };
     }
     return status;
   }
@@ -571,7 +663,12 @@ class Player extends Emitter {
     if (!this.autoMix || !track || !deck || deck.snipped) return;
     this.beats.watch(audio);
     const opts = tempoOptions(track, mixmemory.get(track.id, tempoOptions(track))?.bpm);
-    this.listening.set(audio, { trackId: track.id, track, listener: mixmemory.createListener(opts), after: -Infinity, duration: (track.duration || 0) / 1000 });
+    const duration = (track.duration || 0) / 1000;
+    const keys = new KeyListener({ duration });
+    const vocals = new VocalRecorder({ duration });
+    this.listening.set(audio, { trackId: track.id, track, listener: mixmemory.createListener(opts), keys, vocals, after: -Infinity, duration });
+    this.beats.listenForKey(audio, keys);
+    this.beats.listenForVocals(audio, vocals);
     this.guessFromWaveform(track);
   }
 
@@ -586,9 +683,15 @@ class Player extends Emitter {
       const summary = l.listener.summary(duration);
       if (summary) {
         this.mixFeatureCache.delete(l.trackId);
-        const entry = mixmemory.learn(l.trackId, summary, tempoOptions(l.track)) || mixmemory.get(l.trackId);
-        if (entry && (summary.grid || summary.drumsIn != null || summary.outroStart != null)) {
+        // the key heard in this play (null when too little music was heard) is merged into what is remembered
+        const heardKey = l.keys.estimate();
+        // and where the singing was in the first and last minute (null when too little of it was heard)
+        const heardVocals = l.vocals.summary();
+        const learned = { ...summary, ...(heardKey ? { key: heardKey } : {}), ...(heardVocals ? { vocals: heardVocals } : {}) };
+        const entry = mixmemory.learn(l.trackId, learned, tempoOptions(l.track)) || mixmemory.get(l.trackId);
+        if (entry && (summary.grid || summary.drumsIn != null || summary.outroStart != null || heardKey)) {
           const parts = [entry.bpm ? entry.bpm.toFixed(1) + ' BPM' : 'no clear beat'];
+          if (entry.key) parts.push(`key ${keyName(entry.key)} (${camelot(entry.key)})`);
           if (entry.drumsIn != null) parts.push(entry.drumsIn > 1 ? 'drums come in at ' + mmss(entry.drumsIn) : 'drums from the start');
           if (entry.outroStart != null) parts.push('outro from ' + mmss(entry.outroStart));
           this.logMix('memory', `Remembered ${quote(l.track)}: ${parts.join(', ')} (heard ${entry.plays} time${entry.plays === 1 ? '' : 's'})`);
@@ -605,6 +708,10 @@ class Player extends Emitter {
   }
 
   feedOne(audio, l) {
+    // the key listener rides on the beat watcher's polling: keep it attached, and tell it the length once known
+    if (this.beats.isWatching(audio) && !this.beats.keys.has(audio)) this.beats.listenForKey(audio, l.keys);
+    if (this.beats.isWatching(audio) && !this.beats.vocals.has(audio)) this.beats.listenForVocals(audio, l.vocals);
+    if (!l.keys.duration && isFinite(audio.duration) && audio.duration > 0) { l.keys.duration = audio.duration; l.vocals.setDuration(audio.duration); }
     const fresh = this.beats.since(audio, l.after);
     if (!fresh.length) return;
     l.after = fresh[fresh.length - 1].t;
@@ -623,7 +730,7 @@ class Player extends Emitter {
 
   /** SoundCloud's waveform for a track (normalized samples), fetched once */
   waveformOf(track) {
-    if (!track) return Promise.resolve(null);
+    if (!track || isExternal(track)) return Promise.resolve(null); // only SoundCloud has waveforms
     const known = this.waveSamples.get(track.id);
     if (known !== undefined) return Promise.resolve(known instanceof Promise ? known : known);
     const pending = api.waveform(track).catch(() => null).then((samples) => {
@@ -681,7 +788,8 @@ class Player extends Emitter {
     const mem = mixmemory.get(track.id, tempoOptions(track));
     const wave = this.waveSamples.get(track.id);
     const f = mixorder.features(track, {
-      memory: mem && mem.bpm ? { bpm: mem.bpm, confidence: mem.confidence } : null,
+      // tempo, plus where the beat starts and stops: Mix order scores how good each transition will sound
+      memory: mem ? { bpm: mem.bpm, confidence: mem.confidence, drumsIn: mem.drumsIn, beatToEnd: mem.beatToEnd, outroStart: mem.outroStart, drop: mem.drop, key: mem.key } : null,
       waveform: Array.isArray(wave) ? wave : null
     });
     this.mixFeatureCache.set(track.id, f);
@@ -689,11 +797,45 @@ class Player extends Emitter {
     return f;
   }
 
+  /** The key this play of the song has heard so far (keys.js estimate), or null */
+  keyHeard(track) {
+    for (const l of this.listening.values()) if (l.trackId === track?.id) return l.keys.estimate();
+    return null;
+  }
+
+  /** A song's key as Mix order's features carry it, { tonic, mode, confidence }: its memory refined by what is being heard now, or null */
+  keyOf(track) {
+    if (!track) return null;
+    const stored = mixmemory.get(track.id)?.key || null;
+    const live = this.keyHeard(track);
+    const merged = live ? mergeKey(mixmemory.keyEstimate(stored), live) : null;
+    return merged ? { ...merged.key, confidence: merged.confidence } : stored;
+  }
+
+  /** How `from`'s key (the playing song by default) relates to `next`'s (mixorder.keyRelation), or null while either is unknown */
+  keyRelationTo(next, from = this.current) {
+    if (!next || !from) return null;
+    const relation = mixorder.keyRelation({ key: this.keyOf(from) }, { key: this.keyOf(next) });
+    return relation.relation === 'unknown' ? null : relation;
+  }
+
+  /** The clash worth hiding in the mix into `next` (both keys known and firm), or null */
+  keyClashTo(next, from = this.current) {
+    const relation = this.keyRelationTo(next, from);
+    return relation?.clash && relation.sure ? relation : null;
+  }
+
+  /** The key clash worth hiding in the mix into `next` as a short string ('8A>3B'), or '' when there is none (a plan is remade when it changes) */
+  clashKey(next) {
+    const clash = this.keyClashTo(next);
+    return clash ? `${clash.from}>${clash.to}` : '';
+  }
+
   /** Songs in shuffle order after `after`: random, or in Mix order each blending into the next */
   shuffled(rest, after = this.current) {
     if (this.shuffleMode !== 'mix' || rest.length < 2) return randomOrder(rest);
     const items = after ? [after, ...rest] : rest.slice();
-    const order = mixorder.orderForMixing(items.map(t => this.mixFeatures(t)), { start: 0 });
+    const order = mixorder.orderForMixing(items.map(t => this.mixFeatures(t)), { start: 0, history: mixpairs.history() });
     const out = order.map(i => items[i]);
     if (after) out.shift();
     this.warmFeatures(rest);
@@ -770,8 +912,9 @@ class Player extends Emitter {
     const pool = related.slice();
     const out = [];
     let last = this.current;
+    const history = mixpairs.history();
     while (out.length < count && pool.length) {
-      const [best] = mixorder.pickNext(this.mixFeatures(last), pool.map(t => this.mixFeatures(t)), { count: 1 });
+      const [best] = mixorder.pickNext(this.mixFeatures(last), pool.map(t => this.mixFeatures(t)), { count: 1, history });
       const pick = pool.splice(best == null ? 0 : best, 1)[0];
       out.push(pick);
       last = pick;
@@ -802,15 +945,25 @@ class Player extends Emitter {
    */
   autoStartAt(track, cueIn) {
     if (cueIn > 0 || !this.mixPlan) return Math.max(0, cueIn || 0);
+    // a double drop starts it a build before its drop, so the two drops meet (planDoubleDrop)
+    if (this.mixPlan.doubleDrop?.trackId === track.id) return this.mixPlan.doubleDrop.startAt;
     const known = this.structureOf(track.id);
     if (!(known.drumsIn > 4)) return 0;
-    const half = this.mixPlan.span / (this.audio.playbackRate || 1) / 2 * this.rate;
-    let start = Math.max(0, known.drumsIn - half);
+    // an echo-out brings the next song in at full on one beat: its drums should arrive then, not halfway through
+    const half = this.mixPlan.ending?.kind === 'echo-out' ? 0 : this.mixPlan.span / (this.audio.playbackRate || 1) / 2 * this.rate;
     const g = known.grid;
-    if (g) start = Math.max(0, g.offset + Math.round((start - g.offset) / g.period) * g.period);
     // never so late that the song can't finish the mix and play on for a while after it
     const length = (track.duration || 0) / 1000;
     const room = length - half * 2 - 30;
+    if (g?.phrase) {
+      // its drums (bar 1) come in as the mix swaps over: start a whole number of bars before its downbeat
+      const bar = 4 * g.period;
+      let start = g.downbeat - Math.max(0, Math.min(Math.round(half / bar), Math.floor(g.downbeat / bar + 1e-6))) * bar;
+      if (room > 0 && start > room) start = Math.max(0, start - Math.ceil((start - room) / bar - 1e-6) * bar);
+      return room > 0 ? Math.max(0, start) : 0;
+    }
+    let start = Math.max(0, known.drumsIn - half);
+    if (g) start = Math.max(0, g.offset + Math.round((start - g.offset) / g.period) * g.period);
     return room > 0 ? Math.min(start, room) : 0;
   }
 
@@ -849,14 +1002,21 @@ class Player extends Emitter {
     this.syncMixRating();
   }
 
+  /** Remember how this pair of songs mixed, whatever the style (mixpairs.js: Mix order picks by it) */
+  recordPair(o, outcome) {
+    if (!o?.from || !o.to) return;
+    mixpairs.record({ fromId: o.from.id, toId: o.to.id, fromFamily: this.mixFamily(o.from), toFamily: this.mixFamily(o.to) }, outcome);
+  }
+
   /** Thumbs up ('good') or down ('bad') for the transition in the listening window. Records it now and ends the window. Returns false when there is nothing to rate. */
   rateMix(outcome) {
     const rating = this.mixRating;
     if (!rating || (outcome !== 'good' && outcome !== 'bad')) return false;
     const { choice } = this._mixOutcome;
+    this.recordPair(this._mixOutcome, outcome);
     this.clearMixOutcome();
     mixlearn.record(choice, outcome);
-    this.logMix(outcome, `You rated the ${choice.style === 'dropcut' ? 'drop cut' : 'smooth blend'} into ${quote(rating.track)}: ${outcome} (learning for ${mixlearn.describeBucket(choice.bucket)})`);
+    this.logMix(outcome, `You rated the ${styleLabel(choice.style)} into ${quote(rating.track)}: ${outcome} (learning for ${mixlearn.describeBucket(choice.bucket)})`);
     return true;
   }
 
@@ -870,33 +1030,240 @@ class Player extends Emitter {
    * then settles on a length (16 or 32 beats) once the mix is near. { span: 0 } while still listening.
    */
   planMix(audio, dur) {
-    const previous = this.mixPlan?.loadId === this.loadId ? this.mixPlan : null;
+    // a plan belongs to the transition setting it was made under
+    const upcoming = (this.prepared?.loadId === this.loadId && this.prepared.track) || this.queue[this.index + 1];
+    // ...and to the song it was made for, with what was known of how the two keys relate: a different next song, or a clash
+    // found or gone, makes a new plan (a replaced queue entry must not keep the old song's shortened blend or vocal handling)
+    const keys = this.autoMix ? this.clashKey(upcoming) : '';
+    const previous = this.mixPlan?.loadId === this.loadId && (this.mixPlan.setting ?? settings.transitionStyle) === settings.transitionStyle &&
+      (this.mixPlan.nextId === undefined || this.mixPlan.nextId === upcoming?.id) && (this.mixPlan.clashKey ?? keys) === keys ? this.mixPlan : null;
+    // what is known about the next song's singing changes once (its memory, then what pre-playing heard): plan again then
+    const vocalSig = previous ? this.vocalSig(upcoming) : null;
+    // new knowledge about singing only re-checks the vocal handling of the plan as it stands (its timing is kept)
+    const keep = () => previous.vocalSig !== vocalSig && previous.base ? this.replanVocals(previous, { audio, upcoming, vocalSig }) : previous;
     if (previous?.grid) {
       const oriented = orientGrid(previous.grid, tempoOptions(this.current, this.structureOf(this.current.id).grid?.bpm));
-      if (oriented.period === previous.grid.period) return previous;
-    } else if (previous && audio.currentTime - previous.checkedAt < 2) return previous;
+      if (oriented.period === previous.grid.period) return keep();
+    } else if (previous && audio.currentTime - previous.checkedAt < 2) return keep();
     const rate = audio.playbackRate || 1;
     const left = dur - audio.currentTime;
     if (left < AUTO_LISTEN * rate) this.beats.watch(audio);
     // decide just before the longest mix's look-ahead would have to begin
-    if (left > (MAX_MIX_SECONDS + AUTO_LEAD + 1) * rate) return { span: 0 };
+    // a filter fade is a long blend: it is looked for a little earlier (tags, memory and the waveform say so before the beat is heard)
+    const soon = max => left <= (max + AUTO_LEAD + 1) * rate;
+    if (!soon(FILTER_MAX_SECONDS)) return { span: 0 };
+    if (!soon(MAX_MIX_SECONDS) && !(this.autoMix && this.genreChoice(upcoming).style === 'filterfade')) return { span: 0 };
     const known = this.structureOf(this.current.id);
     const grid = this.outgoingGrid(audio, dur);
+    const filter = this.autoMix && this.genreChoice(upcoming, { grid }).style === 'filterfade';
+    const maxMix = filter ? FILTER_MAX_SECONDS : MAX_MIX_SECONDS;
     // learned taste for this genre and tempo: a small variation is tried each time (mixlearn.js).
     // The family is the outgoing song's: its genre and tempo set the mood of the mix.
     const choice = previous && !grid ? previous.choice : mixlearn.choose(mixlearn.bucketFor(grid?.bpm, this.mixFamily(this.current)));
-    let span = mixSeconds(grid, rate, choice.params.length);
+    let span = mixSeconds(grid, rate, choice.params.length, maxMix);
     // a song whose outro is known: mix over the whole outro, in whole bars
     const outro = known.outroStart != null ? dur - known.outroStart : 0;
-    if (outro >= 6 * rate && outro <= MAX_MIX_SECONDS * rate) {
+    if (outro >= 6 * rate && outro <= maxMix * rate) {
       const bar = grid ? 4 * grid.period : 0;
       span = bar && Math.floor(outro / bar) * bar >= 6 * rate ? Math.floor(outro / bar) * bar : outro;
     }
-    this.mixPlan = { loadId: this.loadId, grid, span, choice, checkedAt: audio.currentTime };
+    // phrase-perfect: begin on a bar line a whole number of phrases into the song and run a whole number of bars
+    // (songs without a known downbeat keep the beat-aligned timing)
+    let phrase = phraseMix({ grid, dur, now: audio.currentTime, rate, factor: choice.params.length, maxSeconds: maxMix,
+      outroStart: outro >= 6 * rate && outro <= maxMix * rate ? known.outroStart : null });
+    if (phrase) span = phrase.span;
+    // Keys that clash are heard while both songs play their melodies: blend for half as long (the bass and mid
+    // hand-over is tightened too, startCrossfade). The key is never shifted: that needs a different playback rate.
+    const clash = this.autoMix ? this.keyClashTo(upcoming) : null;
+    const shorter = clash && shortenForClash({ span, phrase, grid, dur, now: audio.currentTime, rate, factor: choice.params.length,
+      outroStart: outro >= 6 * rate && outro <= maxMix * rate ? known.outroStart : null });
+    if (shorter) { span = shorter.span; phrase = shorter.phrase; }
+    let at = phrase ? phrase.at : null, bars = phrase ? phrase.bars : 0;
+    const base = { span, at, bars, phrase: !!phrase }; // the plan before any vocal handling
+    // A song whose beat stops just before the end has no outro to blend over: a DJ loops its last clean bars or
+    // throws an echo (endings.js).
+    const ending = !this.autoMix ? { kind: 'blend' } : this.planEnding({ audio, dur, rate, grid, known, span, at });
+    let vocal = null;
+    if (ending.kind === 'loop' || ending.kind === 'echo-out') {
+      ({ span, at } = ending.plan);
+      phrase = null; bars = 0;
+    } else if (this.autoMix) {
+      // two singers at once: wait for the outgoing vocals to end, or hold the incoming mids down until they do
+      vocal = this.vocalClash({ dur, rate, grid, span, at, bars, phrase: !!phrase, upcoming });
+      if (vocal?.span) { ({ span, at, bars } = vocal); phrase = phrase && { at, span, bars }; }
+    }
+    this.mixPlan = { loadId: this.loadId, setting: settings.transitionStyle, nextId: upcoming?.id, clashKey: keys, grid, span, at, bars, choice, checkedAt: audio.currentTime,
+      clash: clash && { from: clash.from, to: clash.to, shortened: !!shorter },
+      base, ending, vocalSig: vocalSig ?? this.vocalSig(upcoming), vocals: vocal && (vocal.span ? { shift: vocal.shift } : { hold: vocal.hold }) };
+    if (ending.kind !== 'blend' && ending.kind !== 'fallback' && previous?.ending?.kind !== ending.kind) {
+      this.logMix('plan', `The beat stops before the end of ${quote(this.current)}: ${ending.kind === 'loop' ? 'a loop of its last bars will make room for the blend' : ending.reason}`);
+    }
+    if (vocal && !previous?.vocals) this.logVocals(vocal, rate);
+    if (clash && !previous?.clash) this.logMix('plan', `Keys clash (${clash.from} → ${clash.to}): ${shorter ? 'shorter blend' : 'blend is already short'}, bass and mids hand over earlier`);
     const tempo = grid ? `${grid.bpm.toFixed(1)} BPM ${grid.to != null ? 'heard just now' : 'from memory or this play'}` : 'no clear beat';
     const beatsLong = grid ? Math.round(span / grid.period) : 0;
-    if (!previous || grid) this.logMix('plan', `Planned the mix out of ${quote(this.current)}: ${tempo}, ${(span / rate).toFixed(1)} s${beatsLong ? ` (${beatsLong} beats)` : ''}${outro >= 6 * rate && outro <= MAX_MIX_SECONDS * rate ? ' over its outro' : ''}, trying ${Math.round(choice.params.length * 100)}% length`);
+    if (!previous || grid) this.logMix('plan', `Planned the mix out of ${quote(this.current)}: ${tempo}, ${(span / rate).toFixed(1)} s${beatsLong ? ` (${beatsLong} beats)` : ''}${phrase ? `, on the phrase: ${phrase.bars} bars` : ''}${!phrase && outro >= 6 * rate && outro <= maxMix * rate ? ' over its outro' : ''}${filter ? ', a long filter fade' : ''}, trying ${Math.round(choice.params.length * 100)}% length`);
     return this.mixPlan;
+  }
+
+  /** What a song's remembered singing says, plus what this play (or pre-playing) has heard of it since: a stored summary or null (vocals.js) */
+  vocalsOf(track) {
+    if (!track) return null;
+    let vocals = mixmemory.get(track.id)?.vocals || null;
+    for (const l of this.listening.values()) if (l.trackId === track.id) vocals = mergeVocals(vocals, l.vocals.summary(), 1);
+    const pre = this.prepared?.loadId === this.loadId ? this.prepared.preroll : null;
+    if (pre?.track === track && pre.vocals) vocals = mergeVocals(vocals, pre.vocals.summary(), 1);
+    return vocals;
+  }
+
+  logVocals(vocal, rate) {
+    this.logMix('plan', vocal.span ? `vocals: waited for the outgoing vocals to end (blend starts ${(vocal.shift / rate).toFixed(1)} s later)`
+      : 'vocals: both songs sing here, holding the incoming mids down until the outgoing vocals finish');
+  }
+
+  /** What is known about the next song's singing changed (its memory arrived, or pre-playing heard its intro): redo the vocal handling of the plan in place */
+  replanVocals(plan, { audio, upcoming, vocalSig }) {
+    plan.vocalSig = vocalSig;
+    if (plan.ending.kind !== 'blend' && plan.ending.kind !== 'fallback') return plan;
+    const dur = audio.duration, rate = audio.playbackRate || 1;
+    const vocal = this.vocalClash({ dur, rate, grid: plan.grid, upcoming, ...plan.base });
+    const was = plan.vocals;
+    const moved = vocal?.span ? vocal : plan.base;
+    Object.assign(plan, { span: moved.span, at: moved.at, bars: moved.bars,
+      vocals: vocal && (vocal.span ? { shift: vocal.shift } : { hold: vocal.hold }) });
+    if (vocal && !was) this.logVocals(vocal, rate);
+    return plan;
+  }
+
+  /** A cheap fingerprint of how much is known about the next song's singing, to notice when a plan should be made again */
+  vocalSig(next) {
+    if (!next) return '';
+    const pre = this.prepared?.loadId === this.loadId && this.prepared.preroll?.track === next ? this.prepared.preroll : null;
+    return `${mixmemory.get(next.id)?.vocals ? 1 : 0}${pre?.done ? 1 : 0}`;
+  }
+
+  /**
+   * Keep the outgoing and incoming singers apart (vocals.js planVocalClash). Both songs' singing has to be known: the
+   * outgoing song's last minute from earlier plays, the incoming song's intro from memory or from pre-playing it.
+   * Returns { at, span, bars, shift } (start later), { hold } (hold the incoming mids down) or null.
+   */
+  vocalClash({ dur, rate, grid, span, at, bars, phrase, upcoming }) {
+    const out = this.vocalsOf(this.current), next = this.vocalsOf(upcoming);
+    if (!out || !next) return null;
+    const { end, heardTo } = new VocalMap(out).outroEnd();
+    // the outgoing song's last minute must have been heard through to (nearly) the end
+    if (end == null || heardTo < dur - 6 * rate) return null;
+    const pre = this.prepared?.loadId === this.loadId && this.prepared.preroll?.track === upcoming ? this.prepared.preroll : null;
+    // where the next song starts playing: its mix-in point, or where its drums arrive; unknown until pre-playing when it has a drumless intro
+    const transition = cues.transitionFor(this.current.id, upcoming.id, this.crossfadeSeconds());
+    const drums = this.structureOf(upcoming.id).drumsIn;
+    if (!pre && drums > 4 && !(transition.in > 0)) return null;
+    const from = pre ? pre.startAt : Math.max(0, transition.in || 0);
+    const first = new VocalMap(next).introStart(from);
+    if (first == null) return null;
+    return planVocalClash({ at: at ?? dur - span, span, bars, grid, phrase, dur, rate, outEnd: end, inOnset: first - from });
+  }
+
+  /**
+   * How the song ends when the beat stops before the end (endings.js): the normal blend, a loop of its last clean
+   * bars, an echo-out, or today's plan ('fallback'). { kind, plan?, reason? }
+   */
+  planEnding({ audio, dur, rate, grid, known, span, at }) {
+    const gridOk = confident(grid);
+    if (usableBlend({ span, at: at ?? dur - span, dur, rate, outroStart: known.outroStart, gridOk })) return { kind: 'blend' };
+    const memory = mixmemory.get(this.current.id, tempoOptions(this.current));
+    const clean = findCleanBar({ grid, dur, rate, now: audio.currentTime, outroStart: known.outroStart, beatToEnd: !!memory?.beatToEnd,
+      vocals: this.vocalsOf(this.current) });
+    const loop = clean && loopPlanFor({ clean, dur, rate });
+    const echo = echoPlan({ grid, dur, rate, now: audio.currentTime, outroStart: known.outroStart });
+    return chooseEnding({ usable: false, loop, loopOk: !!loop && this.canLoop(this.deck, loop, grid), echo, echoOk: !!echo && this.normalizer.canEcho === true });
+  }
+
+  /** Whether this deck can loop bars by seeking: progressive media (HLS seeks are slow), a steady tempo, the region buffered */
+  canLoop(deck, loop, grid) {
+    return !deck.hls && !deck.snipped && grid.confidence >= 0.45 && bufferedCovers(deck.audio, loop.at, loop.b + 1);
+  }
+
+  /** Why a planned loop or echo-out can't be carried out whatever the playhead does, or null: the next song must be ready and beat-matched, the deck able to loop or echo */
+  endingBlocked(ending, { outgoing, match, pre }) {
+    if (!pre || !match) return 'the next song is not beat-matched';
+    if (ending.kind === 'echo-out') return this.normalizer.canEcho === true ? null : 'no effects available';
+    return outgoing.hls || outgoing.snipped ? 'this song streams in pieces' : null;
+  }
+
+  /**
+   * Before the plain blend would have to start, check that the special ending (loop or echo-out) can happen. If it can't,
+   * the plan goes back to the plain blend's own timing, so the blend isn't squeezed into what is left after the later start.
+   * True when the plan was changed back.
+   */
+  vetEnding(plan, { audio, dur, fallbackAt }) {
+    if (plan.vetted) return false;
+    const prep = this.prepared, pre = prep?.preroll?.done && prep.preroll.deck !== this.deck ? prep.preroll : null;
+    // still waiting for the next song to be listened to: wait until the plain blend's time is nearly here
+    if (!pre && audio.currentTime < fallbackAt - 1 * (audio.playbackRate || 1)) return false;
+    plan.vetted = true;
+    const gridIn = pre && (pre.grid || this.structureOf(prep.track.id).grid);
+    const match = gridIn && plan.grid ? matchTempo(plan.grid, gridIn, plan.choice.params.stretch) : null;
+    const why = this.endingBlocked(plan.ending, { outgoing: this.deck, match, pre });
+    if (!why) return false;
+    this.logMix('plan', `${plan.ending.kind === 'loop' ? 'Loop' : 'Echo-out'} skipped (${why}): normal blend`);
+    plan.ending = { kind: 'fallback' };
+    Object.assign(plan, { span: plan.base.span, at: plan.base.at, bars: plan.base.bars });
+    return true;
+  }
+
+  /**
+   * At the moment a blend starts: whether the planned loop or echo-out can really be carried out. Both need the next
+   * song ready and beat-matched; a loop also needs the media still seekable and buffered. null (with the reason
+   * in the feed) means a normal blend instead.
+   */
+  confirmEnding(ending, { outgoing, match, pre }) {
+    const audio = outgoing.audio, rate = audio.playbackRate || 1;
+    const no = (why) => { this.logMix('plan', `${ending.kind === 'loop' ? 'Loop' : 'Echo-out'} skipped (${why}): normal blend`); return null; };
+    const blocked = this.endingBlocked(ending, { outgoing, match, pre });
+    if (blocked) return no(blocked);
+    if (ending.kind === 'echo-out') return ending;
+    const { at, b } = ending.plan;
+    if (audio.currentTime > b - 0.3 * rate || audio.currentTime < at - 3 * rate) return no('the playhead moved');
+    if (!bufferedCovers(audio, audio.currentTime - 0.1, b + 1)) return no('the bars are not buffered yet');
+    return ending;
+  }
+
+  /** A loop went wrong or the listener moved the playhead: stop looping and let the blend finish over what is really left of the song */
+  abortLoop(f, why) {
+    const looper = f.looper;
+    if (!looper) return;
+    looper.stop();
+    f.looper = null;
+    this.logMix('mix', `Loop stopped (${why}): finishing with a normal blend`);
+    if (this.fading !== f) return;
+    const audio = f.outgoing.audio, norm = this.normalizer;
+    const remaining = Math.max(0.5, (audio.duration - audio.currentTime) / (audio.playbackRate || 1));
+    if (f.startedAt === null) { f.seconds = Math.max(0.5, Math.min(f.seconds, remaining)); return; }
+    // re-time the rest of the curves to what is really left (the progress made so far is kept)
+    f.progress = Math.min(0.98, f.progress + (norm.ctx.currentTime - f.startedAt) / f.seconds);
+    f.startedAt = null;
+    clearTimeout(f.timer);
+    f.seconds = remaining / (1 - f.progress);
+    this.beginFade();
+  }
+
+  /** An echo-out or a loop cannot adapt to a speed or settings change: end it (the mix finishes with what is left) */
+  breakSpecialFade(why) {
+    const f = this.fading;
+    if (!f) return;
+    if (f.variant === 'echo-out') this.cutFade();
+    else if (f.looper) this.abortLoop(f, why);
+  }
+
+  /**
+   * A beat grid with its bar 1 marked: `known` (a memory or learned grid) says where the downbeat is, and it is
+   * moved onto this grid's beat lattice. Left alone when the downbeat isn't known or the tempos disagree.
+   */
+  withBars(grid, known) {
+    if (!grid || !known?.phrase || !Number.isFinite(known.downbeat) || !(grid.period > 0) ||
+        Math.abs(grid.period / known.period - 1) > 0.002) return grid;
+    return { ...grid, phrase: true, downbeat: grid.offset + Math.round((known.downbeat - grid.offset) / grid.period) * grid.period };
   }
 
   /** Use a recent drum region, then the grid already learned in this play or memory. */
@@ -910,18 +1277,140 @@ class Player extends Emitter {
     const grid = orientGrid(heard || steady, tempoOptions(this.current, steady?.bpm));
     if (!grid) return null;
     const anchor = known?.downbeat ?? learned?.downbeat ?? grid.offset;
-    return { ...grid, downbeat: grid.offset + Math.round((anchor - grid.offset) / grid.period) * grid.period };
+    // `phrase`: the downbeat was really heard (not just the first beat line), so bar lines can be counted from it
+    return { ...grid, downbeat: grid.offset + Math.round((anchor - grid.offset) / grid.period) * grid.period,
+      phrase: !!(known?.phrase || learned?.downbeat != null) };
   }
 
   /** Fit the roll before any confirmed drop, including a short first drop. */
-  dropWindow(grid, drop, match, transition, variant = 'roll', audio = this.audio, track = this.current, margin = 0.3) {
+  dropWindow(grid, drop, match, transition, variant = 'roll', audio = this.audio, track = this.current, margin = 0.3, buildBeats = null) {
     return futureWindow(grid, audio.duration, { now: audio.currentTime, rate: audio.playbackRate || 1,
       dropTime: drop.time, ratio: match.ratio, out: transition.out,
-      outroStart: this.structureOf(track.id).outroStart, variant, margin });
+      outroStart: this.structureOf(track.id).outroStart, variant, margin, buildBeats });
+  }
+
+  /** Whether to look for the next song's drop ahead of the transition (not for a Smooth blend) */
+  dropWanted(transition) {
+    return (transition.style || settings.transitionStyle) !== 'blend';
+  }
+
+  // ---- genre transitions (transitions.js): in Auto, hip-hop is cut, bass music gets a double drop, slow music a filter fade ----
+
+  /** Whether Auto may pick a genre transition into `next`: the Auto style itself (a pair's own style and custom mix points win) */
+  genreWanted(next) {
+    if (!this.autoMix || !next || !this.current) return false;
+    const pair = cues.getPair(this.current.id, next.id);
+    return (['auto', 'blend', 'dropcut'].includes(pair?.style) ? pair.style : settings.transitionStyle) === 'auto';
+  }
+
+  /**
+   * What genreTransition says about the playing song and `next`, from what is known so far: genre, tempo and energy from
+   * the features, plus the extras the caller has { grid (the outgoing beat), dropOut, dropIn, downbeatIn, vocals (look
+   * at the outgoing song's singing) }. { style: null } when none applies or Auto isn't in charge.
+   */
+  genreChoice(next, { grid, dropOut = null, dropIn = null, downbeatIn = null, vocals = false } = {}) {
+    if (!this.genreWanted(next)) return { style: null };
+    const from = this.current, a = this.mixFeatures(from), b = this.mixFeatures(next);
+    const familyOut = this.mixFamily(from), familyIn = this.mixFamily(next);
+    const bpmOut = grid?.bpm ?? a.bpm, bpmIn = b.bpm;
+    let vocalsOut = false;
+    if (vocals && familyOut === 'hiphop') {
+      const v = this.vocalsOf(from), end = this.audio.duration - 4 * (this.audio.playbackRate || 1);
+      vocalsOut = !!v && new VocalMap(v).levelAt(end) >= VOCAL_LEVEL;
+    }
+    return genreTransition({ familyOut, familyIn, bpmOut, bpmIn, energyOut: a.energy?.overall ?? null, energyIn: b.energy?.overall ?? null,
+      dropOut, dropIn, downbeatIn, vocalsOut, beatOut: grid === undefined ? undefined : !!grid, mellow: mellowHint({ ...a, title: from.title }),
+      clash: familyOut === 'bass' && familyIn === 'bass' && !!dropOut && !!this.keyClashTo(next) });
+  }
+
+  /**
+   * Auto's genre transition for this pair in the shape selectMixStyle returns, or null (Auto's usual choice then
+   * applies): a quick cut, the double drop planned earlier by planDoubleDrop, or a filter fade.
+   */
+  selectGenre(prep, transition, gridOut) {
+    if (transition.custom || !this.genreWanted(prep.track)) return null;
+    const entry = mixmemory.get(prep.track.id, tempoOptions(prep.track));
+    const pre = prep.preroll;
+    const ready = !!pre?.done && pre.deck !== this.deck && pre.deck.track === prep.track && !prep.stream.snipped;
+    const plan = this.mixPlan?.loadId === this.loadId ? this.mixPlan : null;
+    const dd = plan?.doubleDrop?.trackId === prep.track.id ? plan.doubleDrop : null;
+    if (dd) {
+      if (ready) return { style: 'blend', genre: 'doubledrop', learn: 'doubledrop', doubleDrop: true, reason: dd.reason };
+      return null; // the next song isn't ready to meet the drop: checkCrossfade waits, and the plan lapses if it never is
+    }
+    const gridIn = pre?.dropGrid || pre?.grid || memoryGrid(entry);
+    const dropIn = pre?.drop || (!pre?.candidate ? entry?.drop : null);
+    const genre = this.genreChoice(prep.track, { grid: gridOut, dropIn, downbeatIn: gridIn?.downbeat ?? null, vocals: true });
+    if (genre.style === 'filterfade') return { style: 'blend', genre: 'filterfade', learn: 'filterfade', filter: true, reason: genre.reason };
+    if (genre.style !== 'quickcut' || !ready || !confident(gridIn) || !confident(gridOut)) return null;
+    // the cut lands on the next song's first downbeat that is far enough in for the silent one-bar pre-roll, and not before its drums
+    const rate = this.audio.playbackRate || 1;
+    const drums = this.structureOf(prep.track.id).drumsIn;
+    const from = Math.max(transition.in || 0, drums > 4 ? drums : 0, QUICK_CUT_BEATS * gridOut.period * rate + 2);
+    const origin = gridIn.downbeat ?? gridIn.offset, bar = 4 * gridIn.period;
+    const drop = { time: origin + Math.ceil((from - origin) / bar - 1e-8) * bar, confidence: 1 };
+    const quick = { buildBeats: QUICK_CUT_BEATS, options: quickCutOptions({ echo: genre.variant === 'echo' }) };
+    const planned = this.planDrop(prep, transition, gridOut, drop, gridIn, { style: 'dropcut', variant: 'echo', reason: genre.reason, drop, genre: 'quickcut', learn: 'quickcut', quick });
+    if (planned.style !== 'dropcut') return null;
+    // the echo tail is for a cut that lands while the outgoing song is still singing
+    const v = this.vocalsOf(this.current);
+    if (v) quick.options.echo = new VocalMap(v).levelAt(planned.window.cut) >= VOCAL_LEVEL;
+    planned.reason = `hip-hop: quick cut on the downbeat${quick.options.echo ? ', short echo tail' : ''}`;
+    return planned;
+  }
+
+  /**
+   * Double drop (bass music, both drops known, tempos matching): decided early, because the blend starts a build
+   * before the outgoing song's own drop, which is ahead of the usual last-minute plan. Replaces the mix plan with one
+   * that carries the timing (transitions.js doubleDropPlan); runs from checkCrossfade as the song plays. Once per song
+   * and next song: if it doesn't fit it is not tried again.
+   */
+  planDoubleDrop(audio, dur) {
+    const prep = this.prepared, plan = this.mixPlan?.loadId === this.loadId ? this.mixPlan : null;
+    const rate = audio.playbackRate || 1;
+    if (plan?.doubleDrop) {
+      // the moment passed without the blend starting (paused, seeked, the next song never ready): carry on as an ordinary blend
+      if (!this.fading && audio.currentTime > plan.at + 1.5 * rate) {
+        this.logMix('plan', 'Double drop missed its moment: planning an ordinary blend instead');
+        this.mixPlan = null;
+      }
+      return;
+    }
+    if (!prep?.stream || prep.loadId !== this.loadId || !this.genreWanted(prep.track)) return;
+    const key = `${this.loadId}:${prep.track.id}`;
+    if (this.doubleDropTried === key) return;
+    const pre = prep.preroll;
+    if (!pre?.done || pre.deck === this.deck || pre.deck.track !== prep.track || prep.stream.snipped || pre.candidate) return;
+    const memory = mixmemory.get(this.current.id, tempoOptions(this.current));
+    const dropOut = memory?.drop;
+    // cheap to ask every tick: a drop that is ahead with room after it
+    if (!(dropOut?.confidence >= 0.65) || dropOut.time < audio.currentTime + 14 * rate || dropOut.time < dur * 0.5) return;
+    const entry = mixmemory.get(prep.track.id, tempoOptions(prep.track));
+    const dropIn = pre.drop || entry?.drop;
+    const gridOut = this.structureOf(this.current.id).grid;
+    const gridIn = this.withBars(pre.dropGrid || pre.grid || memoryGrid(entry), memoryGrid(entry));
+    if (!dropIn || !confident(gridOut) || !confident(gridIn)) return;
+    this.doubleDropTried = key;
+    const genre = this.genreChoice(prep.track, { grid: gridOut, dropOut, dropIn, downbeatIn: gridIn.downbeat ?? null });
+    if (genre.style !== 'doubledrop') return;
+    const match = matchTempo(gridOut, gridIn, 0.06);
+    const durIn = pre.deck.audio.duration > 0 ? pre.deck.audio.duration : (prep.track.duration || 0) / 1000 || null;
+    const dd = match && doubleDropPlan({ gridOut, dropOut, dropIn, ratio: match.ratio, now: audio.currentTime, dur, rate, durIn, lead: PHRASE_LEAD });
+    if (!dd) return;
+    const choice = mixlearn.choose(mixlearn.bucketFor(gridOut.bpm, this.mixFamily(this.current)));
+    this.mixPlan = { loadId: this.loadId, setting: settings.transitionStyle, nextId: prep.track.id, clashKey: this.clashKey(prep.track), grid: gridOut, span: dd.span, at: dd.at, bars: dd.bars, choice,
+      checkedAt: audio.currentTime, clash: null, base: null, ending: { kind: 'blend' }, vocalSig: this.vocalSig(prep.track), vocals: null,
+      doubleDrop: { ...dd, trackId: prep.track.id, reason: genre.reason } };
+    // wind the next song back to where its build starts, ready to be buffered
+    pre.startAt = pre.staged = dd.startAt;
+    pre.deck.audio.currentTime = this.clampStart(pre.deck.audio, dd.startAt);
+    this.logMix('plan', `Double drop into ${quote(prep.track)}: its drop at ${mmss(dropIn.time)} will land on this song's drop at ${mmss(dd.dropAt)}; both play for ${dd.dropBars} bars, then the bass swaps (${dd.bars} bars from ${mmss(dd.at)})`);
   }
 
   selectMixStyle(prep, transition, gridOut) {
     if ((transition.style || settings.transitionStyle) === 'blend') return planStyle({ style: 'blend' });
+    const genre = this.selectGenre(prep, transition, gridOut);
+    if (genre) return genre;
     const entry = mixmemory.get(prep.track.id, tempoOptions(prep.track));
     const pre = prep.preroll;
     const gridIn = pre?.dropGrid || pre?.grid || memoryGrid(entry);
@@ -930,14 +1419,24 @@ class Player extends Emitter {
     const selected = planStyle({ style: settings.transitionStyle, pair: transition, drop, gridOut,
       features: [this.current, prep.track].map(track => ({ ...this.mixFeatures(track), title: track.title })),
       rejected: mixlearn.avoidsDropCut(mixlearn.bucketFor(gridOut?.bpm, this.mixFamily(this.current))),
+      clash: !!this.keyClashTo(prep.track),
       ready: !prep.dropFailed && !!pre?.done && !prep.stream.snipped && pre.deck !== this.deck && pre.deck.track === prep.track });
     if (selected.style !== 'dropcut') return selected;
+    return this.planDrop(prep, transition, gridOut, drop, gridIn, selected);
+  }
+
+  /** Time a drop plan on the outgoing phrase grid: the build's window, and whether the next song can be at its drop then. A blend (with the reason) when not. */
+  planDrop(prep, transition, gridOut, drop, gridIn, selected) {
+    const pre = prep.preroll;
     // There is no audible overlap to tempo-match. Pre-roll at the outgoing rate
     // and position the incoming phrase downbeat at the outgoing cut instead.
-    const timingGrid = selected.variant === 'roll' ? gridOut :
+    // (a quick cut always has a steady outgoing grid: it counts bars on it.)
+    const shape = selected.quick;
+    const timingGrid = selected.variant === 'roll' || shape ? gridOut :
       { bpm: 120 / (this.audio.playbackRate || 1), period: 0.5 * (this.audio.playbackRate || 1), offset: 0, confidence: 0 };
     const match = { gridOut: timingGrid, gridIn: gridIn || timingGrid, ratio: 1 };
-    const window = this.dropWindow(timingGrid, drop, match, transition, selected.variant);
+    const window = this.dropWindow(timingGrid, drop, match, transition, shape ? 'roll' : selected.variant,
+      this.audio, this.current, 0.3, shape?.buildBeats);
     const rate = this.audio.playbackRate || 1, inRate = rate * match.ratio;
     const launch = window && Math.max(this.audio.currentTime, window.build - window.lead);
     const seconds = window && (window.cut - launch) / rate;
@@ -973,7 +1472,7 @@ class Player extends Emitter {
     if (this.fading || this.audio.paused || !norm.addDeck(deck.audio)) return;
     const transition = cues.transitionFor(this.current.id, prep.track.id);
     const remembered = mixmemory.get(prep.track.id, tempoOptions(prep.track));
-    const wantsDrop = !prep.dropFailed && !prep.stream.snipped && (transition.style || settings.transitionStyle) !== 'blend';
+    const wantsDrop = !prep.dropFailed && !prep.stream.snipped && this.dropWanted(transition);
     const candidate = wantsDrop ? (remembered?.drop?.confidence >= 0.65 ? null :
       this.waves.get(prep.track.id)?.dropCandidates?.find(c => c.time >= transition.in && !(prep.rejectedDrops || []).includes(c.time))) : null;
     const drop = wantsDrop && remembered?.drop?.confidence >= 0.65 ? remembered.drop : null;
@@ -988,11 +1487,13 @@ class Player extends Emitter {
     this.releaseDeck(deck);
     norm.setFade(deck.audio, 0);
     norm.holdBass(deck.audio, true, 0);
-    const pre = prep.preroll = { deck, track: prep.track, startAt: blendStart, candidate, drop, grid: null, done: false, timer: null };
+    const pre = prep.preroll = { deck, track: prep.track, startAt: blendStart, candidate, drop, grid: null, done: false, timer: null,
+      vocals: new VocalRecorder({ duration: (prep.track.duration || 0) / 1000 }) };
     if (candidate) this.logMix('listen', `Checking drop at ${mmss(candidate.time)} in ${quote(prep.track)} ahead of the transition`);
     this.attach(prep.stream, true, startAt, deck, prep.track);
     this.beats.unwatch(deck.audio);
     this.beats.watch(deck.audio);
+    this.beats.listenForVocals(deck.audio, pre.vocals); // the intro's singing, for keeping two voices apart
     pre.timer = setInterval(() => {
       // gone, or stuck (stalled stream, a song shorter than the listening time): give up on the beat
       if (this.audio.paused || deck.audio.currentTime > lastPosition + 0.05) {
@@ -1059,7 +1560,8 @@ class Player extends Emitter {
     const transition = cues.transitionFor(this.current.id, pre.track.id);
     const window = match && this.dropWindow(gridOut, pre.drop, match, transition);
     // Even without an outgoing grid yet, keep the distant drop in the HLS buffer.
-    const staged = pre.drop ? Math.max(0, pre.drop.time - (window ?
+    const dd = this.mixPlan?.loadId === this.loadId && this.mixPlan.doubleDrop?.trackId === pre.track.id;
+    const staged = dd ? this.mixPlan.doubleDrop.startAt : pre.drop ? Math.max(0, pre.drop.time - (window ?
       (window.cut - window.build + window.lead) * match.ratio : MAX_MIX_SECONDS * this.rate + 2)) : pre.startAt;
     pre.staged = staged;
     pre.deck.audio.currentTime = this.clampStart(pre.deck.audio, staged);
@@ -1146,7 +1648,7 @@ class Player extends Emitter {
     // where the next song comes in and how long the overlap lasts (0 = a clean cut)
     const transition = cues.transitionFor(this.current.id, prep.track.id, this.crossfadeSeconds());
     const plan = prep.auto && !transition.custom && this.mixPlan && this.mixPlan.loadId === this.loadId ? this.mixPlan : null;
-    const wantsDrop = prep.auto && (transition.style || settings.transitionStyle) !== 'blend';
+    const wantsDrop = prep.auto && this.dropWanted(transition);
     const plannedGrid = wantsDrop ? this.mixPlan?.grid || this.outgoingGrid(audio, audio.duration) : null;
     const liveGrid = prep.auto && plannedGrid ? this.beats.grid(audio, 20, plannedGrid.bpm) : null;
     const dropGrid = liveGrid?.confidence >= 0.25 && Math.abs(liveGrid.period / plannedGrid.period - 1) < 0.02 ?
@@ -1156,7 +1658,7 @@ class Player extends Emitter {
     const fade = plan ? plan.span / rate : transition.fade;
     if (!dropcut && prep.selected?.style === 'dropcut') {
       const blendAt = transition.out != null && transition.out < audio.duration - 0.25 && audio.currentTime <= transition.out + 3 ?
-        transition.out : audio.duration - (fade ? fade * rate : 0.2);
+        transition.out : plan?.at ?? audio.duration - (fade ? fade * rate : 0.2);
       if (blendAt > audio.currentTime) {
         // Readiness can change between planning and launch. Keep the original blend timing.
         prep.selected = selected;
@@ -1164,11 +1666,13 @@ class Player extends Emitter {
         return;
       }
     }
-    const seconds = dropcut ? (selected.window.cut - audio.currentTime) / rate : fade ? Math.max(0.5, Math.min(fade, left)) : 0.1;
+    let seconds = dropcut ? (selected.window.cut - audio.currentTime) / rate : fade ? Math.max(0.5, Math.min(fade, left)) : 0.1;
     // Auto mix: the next song is already loaded on the idle deck; line its beats up with this one's
     const pre = prep.preroll && prep.preroll.deck === incoming && incoming.track === prep.track ? prep.preroll : null;
     if (!dropcut && pre && (pre.candidate || pre.drop)) pre.startAt = plan ? this.autoStartAt(prep.track, transition.in || 0) : Math.max(0, transition.in || 0);
-    const startAt = dropcut ? selected.drop.time - seconds * rate * selected.match.ratio :
+    // a double drop: the incoming song starts a build before its drop, which then lands on the outgoing song's drop
+    const dd = selected.doubleDrop && plan?.doubleDrop?.trackId === prep.track.id ? plan.doubleDrop : null;
+    const startAt = dd ? dd.startAt : dropcut ? selected.drop.time - seconds * rate * selected.match.ratio :
       pre ? pre.startAt : plan ? this.autoStartAt(prep.track, transition.in || 0) : Math.max(0, transition.in || 0);
     let choice = plan ? plan.choice : dropcut ? mixlearn.choose(mixlearn.bucketFor(selected.match.gridOut.bpm, this.mixFamily(this.current))) : null;
     let match = null;
@@ -1181,15 +1685,22 @@ class Player extends Emitter {
       const fresh = this.beats.grid(audio, 20, (planned || known || {}).bpm || null);
       // nothing heard earlier or remembered: the stretch before the outro, rather than the outro itself
       const steady = planned || known || this.beats.grid(audio, 20, null, 12);
-      const gridOut = fresh && (!steady || Math.abs(fresh.bpm / steady.bpm - 1) < 0.02) ? fresh : steady;
+      let gridOut = fresh && (!steady || Math.abs(fresh.bpm / steady.bpm - 1) < 0.02) ? fresh : steady;
       // the next song's beat: heard while pre-playing, else from its memory
-      const gridIn = pre.grid || this.structureOf(prep.track.id).grid;
-      match = matchTempo(gridOut, gridIn, choice ? choice.params.stretch : 0.08);
+      let gridIn = pre.grid || this.structureOf(prep.track.id).grid;
+      // known downbeats put the bar lines on these beat grids too, so the songs meet bar 1 to bar 1 (alignedStart)
+      gridOut = this.withBars(gridOut, planned || known);
+      gridIn = this.withBars(gridIn, this.structureOf(prep.track.id).grid);
+      match = matchTempo(gridOut, gridIn, dd ? 0.06 : choice ? choice.params.stretch : 0.08);
       // the tempo only became clear now: file what this mix teaches under its real tempo range
       if (choice && mixlearn.parseBucket(choice.bucket)?.tempo === 'nobeat' && match) choice = Object.assign({}, choice, { bucket: mixlearn.rebucket(choice.bucket, match.gridOut.bpm) });
     }
     if (dropcut) match = selected.match;
-    if (choice) choice = { ...choice, style: selected.style };
+    // a loop or an echo-out planned for a song with no outro: only when the next song is beat-matched and the deck can do it
+    const ending = !dropcut && ['loop', 'echo-out'].includes(plan?.ending?.kind) ? this.confirmEnding(plan.ending, { outgoing, match, pre }) : null;
+    // a loop makes the blend longer than what is left of the song: the repeats fill the difference
+    if (ending?.kind === 'loop') seconds = ending.plan.span / rate;
+    if (choice) choice = { ...choice, style: selected.learn || selected.style };
 
     const from = this.current, fromIndex = this.index, fromQueue = this.queue;
     // move to the next song exactly like next() would
@@ -1203,18 +1714,31 @@ class Player extends Emitter {
     this.loadId++;
     if (!pre) this.releaseDeck(incoming);
     // Auto mix blends like a DJ and swaps the two songs' bass halfway through, over one bar (not for quick cuts)
-    const bass = prep.auto && !dropcut && seconds >= 2;
+    const bass = prep.auto && !dropcut && seconds >= 2 && ending?.kind !== 'echo-out';
     const grid = match ? match.gridOut : plan && plan.grid;
     const bar = grid ? 4 * grid.period / rate : 0;
-    const bassWidth = bar ? Math.min(0.25, Math.max(0.06, bar / seconds)) : 0.2;
+    // clashing keys: hand the bass and mids over in a shorter window, with the full EQ move
+    const clashing = bass && prep.auto ? this.keyClashTo(prep.track, from) : null;
+    const bassWidth = (bar ? Math.min(0.25, Math.max(0.06, bar / seconds)) : 0.2) * (clashing ? 0.6 : 1);
+    // a double drop keeps the outgoing bass through the shared bars and cuts only the incoming sub until it swaps
+    const ddBlend = bass && dd ? dd : null;
     const fading = this.fading = { from, to: track, outgoing, incoming, seconds, bass, bassWidth, shapeIn: null, shapeOut: null,
+      bassOpts: ddBlend && { center: ddBlend.center, corner: 90 },
+      genre: selected.genre || null, filter: !!selected.filter,
       progress: 0, startedAt: null, timer: null, fallback: null, style: selected.style, reason: selected.reason,
+      variant: ending?.kind === 'echo-out' ? 'echo-out' : null, ending, echoGrid: ending?.kind === 'echo-out' ? match.gridOut : null, looper: null,
       dropcut: dropcut ? selected : null, prep, fromIndex, fromQueue };
 
-    if (bass) fading.shapeIn = fading.shapeOut = { dj: choice ? choice.params.dj : 1 };
+    if (bass) {
+      fading.shapeIn = fading.shapeOut = ddBlend ? { dj: 1, center: ddBlend.center, inEnd: ddBlend.inEnd } : { dj: choice ? choice.params.dj : 1 };
+      // the mid and high EQ moves scale with the same learned DJ-blend amount as the fades (normalizer.js eqLevels); a double drop lets both songs' mids play
+      fading.bassOpts = { ...fading.bassOpts, eq: clashing ? 1 : ddBlend ? 0.5 : Number(fading.shapeIn.dj) || 0 };
+      // the outgoing song is still singing when the next one would: its mids stay held down longer (vocals.js)
+      if (plan?.vocals?.hold) fading.bassOpts.midHold = plan.vocals.hold;
+    }
     // learning: was this transition kept? (decided after the mix, see finishFade / noteSkip)
     if (this.mixOutcome) clearTimeout(this.mixOutcome.timer);
-    this.mixOutcome = choice ? { choice, trackId: track.id, mixEnd: null, timer: null } : null;
+    this.mixOutcome = choice ? { choice, trackId: track.id, from, to: track, mixEnd: null, timer: null } : null;
     // each deck has its own loudness level, so the outgoing song keeps its level to the end.
     // A song never heard before starts at the level measured against this one while pre-playing.
     const outLoudness = pre && pre.loudness ? this.beats.loudness(audio) : null;
@@ -1223,8 +1747,8 @@ class Player extends Emitter {
     norm.startTrack(track.id, louderDb);
     norm.setFade(incoming.audio, 0);
     norm.setFade(outgoing.audio, 1);
-    norm.holdBass(incoming.audio, true, bass ? 0 : null, bassWidth);
-    norm.holdBass(outgoing.audio, false, bass ? 0 : null, bassWidth);
+    norm.holdBass(incoming.audio, true, bass ? 0 : null, bassWidth, fading.bassOpts);
+    norm.holdBass(outgoing.audio, false, bass ? 0 : null, bassWidth, fading.bassOpts);
     Object.assign(track, prep.stream.track);
     if (prep.stream.snipped) toast('Only a 30 second preview is available for this track');
     this.active = 1 - this.active;
@@ -1235,7 +1759,9 @@ class Player extends Emitter {
     if (dropcut) audio.playbackRate = rate;
     if (pre) {
       // start on the beat; BeatLock then keeps it there and matches the tempo
-      incoming.audio.currentTime = this.clampStart(incoming.audio, !dropcut && match ? alignedStart(match, audio.currentTime, startAt) : startAt);
+      // a double drop looks half a bar either side of where the incoming song should be, so it lands on the outgoing drop whether the blend starts a hair early or late
+      const from = dd && match ? startAt - 0.5 * (match.bars ? 4 : 1) * match.gridIn.period : startAt;
+      incoming.audio.currentTime = this.clampStart(incoming.audio, !dropcut && match ? alignedStart(match, audio.currentTime, from) : startAt);
       if (match && !dropcut) this.lock = new BeatLock(audio, incoming.audio, match, this.rate);
       if (dropcut) incoming.audio.playbackRate = rate * match.ratio;
       incoming.audio.play().catch(() => {});
@@ -1243,7 +1769,11 @@ class Player extends Emitter {
       this.attach(prep.stream, true, startAt, incoming, track);
     }
     this.startListening(incoming.audio, track);
-    this.logMix(dropcut ? 'plan' : 'mix', `${dropcut ? 'Planning a drop cut…' : 'Smooth blend into'} ${quote(track)}${selected.reason ? ': ' + selected.reason : ''}${match && !dropcut ? ', beats matched' : ''}${startAt > 0 ? ', from ' + mmss(startAt) : ''}`);
+    if (ending?.kind === 'loop') {
+      fading.looper = new BarLooper(audio, { a: ending.plan.at, b: ending.plan.b, loops: ending.plan.loops }, { onAbort: why => this.abortLoop(fading, why) });
+      fading.looper.start();
+    }
+    this.logMix(dropcut ? 'plan' : 'mix', `${dropcut ? (selected.genre === 'quickcut' ? 'Planning a quick cut…' : 'Planning a drop cut…') : selected.genre === 'doubledrop' ? 'Double drop into' : selected.genre === 'filterfade' ? 'Filter fade into' : 'Smooth blend into'} ${quote(track)}${selected.reason ? ': ' + selected.reason : ''}${match && !dropcut ? (match.bars ? ', beats matched to the bar' : ', beats matched') : ''}${clashing ? `, keys clash (${clashing.from} → ${clashing.to}): tighter bass and mid hand-over` : ''}${ending ? ', ' + ending.reason : ''}${plan?.vocals?.hold ? ', incoming mids held down for the outgoing vocals' : ''}${startAt > 0 ? ', from ' + mmss(startAt) : ''}`);
     // the fade starts once the new song is really playing, so no silence in the middle of it
     fading.fallback = setTimeout(() => {
       if (this.fading !== fading) return;
@@ -1265,6 +1795,7 @@ class Player extends Emitter {
     if (!f || f.startedAt !== null || this.audio.paused) return;
     if (f.style === 'dropcut') { this.beginDropCut(f); return; }
     clearTimeout(f.fallback);
+    if (f.variant === 'echo-out') { this.beginEchoOut(f); return; }
     const norm = this.normalizer;
     const left = f.seconds * (1 - f.progress);
     if (!f.announced) { f.announced = true; this.emit('transition', { phase: 'start', from: f.from, to: f.to }); }
@@ -1273,11 +1804,48 @@ class Player extends Emitter {
     norm.fadeDeck(f.incoming.audio, true, left, f.progress, f.shapeIn);
     norm.fadeDeck(f.outgoing.audio, false, left, f.progress, f.shapeOut);
     if (f.bass) {
-      norm.swapBass(f.incoming.audio, true, left, f.progress, f.bassWidth);
-      norm.swapBass(f.outgoing.audio, false, left, f.progress, f.bassWidth);
+      norm.swapBass(f.incoming.audio, true, left, f.progress, f.bassWidth, f.bassOpts);
+      norm.swapBass(f.outgoing.audio, false, left, f.progress, f.bassWidth, f.bassOpts);
+    }
+    // filter fade: the outgoing song is low-passed as it leaves
+    if (f.filter) {
+      norm.sweepLowpass(f.outgoing.audio, left, f.progress);
+      f.outgoing.filtered = true;
     }
     clearTimeout(f.timer);
     f.timer = setTimeout(() => this.finishFade(f), left * 1000 + 100);
+  }
+
+  /**
+   * Echo-out (echoout.js): on the next beat line the outgoing deck's dry signal starts leaving over one beat, its last
+   * beat is thrown into a tempo-synced echo that rings for a couple of bars, and the incoming song (already
+   * beat-matched, bass in) opens on that beat. The graph runs on the audio clock; a pause or seek ends it.
+   */
+  beginEchoOut(f) {
+    if (this.fading !== f || f.echoScheduled) return;
+    const norm = this.normalizer, ctx = norm.ctx, a = f.outgoing.audio, plan = f.ending.plan, grid = f.echoGrid;
+    const rate = a.playbackRate || 1, beat = grid.period / rate;
+    // the next beat line of the outgoing song, far enough ahead that the audio clock can still reach it
+    const line = grid.offset + Math.ceil((a.currentTime + 0.15 * rate - grid.offset) / grid.period - 1e-9) * grid.period;
+    const start = ctx.currentTime + (line - a.currentTime) / rate;
+    const schedule = { start, beat, delay: plan.delayBeats * beat, feedback: plan.feedback, end: start + beat + plan.tailBars * 4 * beat + 0.4 };
+    if (!norm.startEchoOut(f.outgoing.audio, f.incoming.audio, schedule)) {
+      // no delay available after all: the incoming song simply fades in over what is left
+      f.variant = null;
+      f.ending = null;
+      this.logMix('mix', 'Echo-out unavailable: plain blend');
+      this.beginFade();
+      return;
+    }
+    f.echoScheduled = true;
+    f.announced = true;
+    f.startedAt = start;
+    f.seconds = schedule.end - start;
+    this.emit('transition', { phase: 'start', from: f.from, to: f.to });
+    this.openMixRating(f.to);
+    clearTimeout(f.timer);
+    f.timer = setTimeout(() => this.finishFade(f), (schedule.end - ctx.currentTime) * 1000 + 100);
+    this.logMix('mix', `Echo-out: ${plan.delayBeats === 0.75 ? '3/4' : '1/2'}-beat echo, ${plan.tailBars} bar tail`);
   }
 
   /** Retry seeks/buffering until the last possible two-bar build must start. */
@@ -1285,7 +1853,7 @@ class Player extends Emitter {
     if (f.armTimer || f.dropScheduled) return;
     const a = f.outgoing.audio, beat = f.dropcut.match.gridOut.period;
     const rate = a.playbackRate || 1;
-    f.armDeadline = performance.now() + Math.max(0, (a.duration - a.currentTime - 8 * beat - Math.max(beat, 0.5 * rate)) / rate - 0.3) * 1000;
+    f.armDeadline = performance.now() + Math.max(0, (a.duration - a.currentTime - (f.dropcut.quick?.buildBeats ?? 8) * beat - Math.max(beat, 0.5 * rate)) / rate - 0.3) * 1000;
     f.armTimer = setInterval(() => this.beginDropCut(f), 50);
   }
 
@@ -1300,10 +1868,12 @@ class Player extends Emitter {
       this.fallbackDropCut(f, 'Drop audio missed the readiness deadline');
       return;
     }
+    const shape = plan.quick;
     if (plan.window.build < a.currentTime + 0.3 * rate) {
+      const windowVariant = shape ? 'roll' : plan.variant;
       const window = this.dropWindow(plan.match.gridOut, plan.drop, plan.match, plan.transition || {},
-        plan.variant, a, f.from, 1.8) || this.dropWindow(plan.match.gridOut, plan.drop, plan.match, plan.transition || {},
-        plan.variant, a, f.from, 0.3);
+        windowVariant, a, f.from, 1.8, shape?.buildBeats) || this.dropWindow(plan.match.gridOut, plan.drop, plan.match, plan.transition || {},
+        windowVariant, a, f.from, 0.3, shape?.buildBeats);
       if (!window) {
         this.fallbackDropCut(f, 'No future drop build fits');
         return;
@@ -1312,7 +1882,7 @@ class Player extends Emitter {
     }
     const start = ctx.currentTime + (plan.window.build - a.currentTime) / rate;
     const length = (plan.window.cut - plan.window.build) / plan.match.gridOut.period;
-    const schedule = rollSchedule(start, beat, length, plan.variant);
+    const schedule = rollSchedule(start, beat, length, plan.variant, shape?.options);
     const ready = !a.paused && !b.paused && !a.seeking && !b.seeking && a.readyState >= 3 && b.readyState >= 3;
     if (!schedule) {
       this.fallbackDropCut(f, 'No future drop build fits');
@@ -1341,7 +1911,7 @@ class Player extends Emitter {
     }
     f.dropScheduled = true;
     f.announced = true;
-    this.logMix('mix', `Drop cut into ${quote(f.to)}: ${plan.reason || f.reason || 'drop armed'}`);
+    this.logMix('mix', `${plan.quick ? 'Quick cut' : 'Drop cut'} into ${quote(f.to)}: ${plan.reason || f.reason || 'drop armed'}`);
     this.emit('transition', { phase: 'start', from: f.from, to: f.to, style: 'dropcut' });
     const tick = () => {
       if (this.fading !== f) return;
@@ -1373,7 +1943,7 @@ class Player extends Emitter {
       const phase = dropPhase(schedule, now);
       if (phase !== f.phase) {
         f.phase = phase;
-        this.logMix('mix', `Drop cut: ${phase}${phase === 'cut' ? ' · echo tail only' : ''}`);
+        this.logMix('mix', `${plan.quick ? 'Quick cut' : 'Drop cut'}: ${phase}${phase === 'cut' ? ' · echo tail only' : ''}`);
       }
       if (now >= schedule.end) this.finishFade(f);
     };
@@ -1403,7 +1973,9 @@ class Player extends Emitter {
       this.releaseDeck(f.incoming);
       this.beats.unwatch(f.incoming.audio);
       this.queue = f.fromQueue;
-      this.index = f.fromIndex;
+      // the queue may have been edited during the pre-roll (same array): find the outgoing song again
+      const at = f.fromQueue.indexOf(f.from);
+      this.index = at >= 0 ? at : f.fromIndex;
       this.active = this.decks.indexOf(f.outgoing);
       this.loadId++;
       this.mixPlan = null;
@@ -1421,6 +1993,7 @@ class Player extends Emitter {
       return;
     }
     f.style = 'blend';
+    f.genre = null;
     f.reason = `${reason}: smooth blend`;
     f.dropScheduled = false;
     f.schedule = null;
@@ -1445,6 +2018,8 @@ class Player extends Emitter {
       this.audio.pause();
       return;
     }
+    // a delay tail cannot be rewound either: pausing ends an echo-out now (the next song carries on from here)
+    if (f?.variant === 'echo-out' && f.echoScheduled) { this.cutFade(); return; }
     if (!f || f.startedAt === null) return;
     const norm = this.normalizer;
     f.progress = Math.min(1, f.progress + (norm.ctx.currentTime - f.startedAt) / f.seconds);
@@ -1453,9 +2028,10 @@ class Player extends Emitter {
     norm.holdFade(f.incoming.audio, true, f.progress, f.shapeIn);
     norm.holdFade(f.outgoing.audio, false, f.progress, f.shapeOut);
     if (f.bass) {
-      norm.holdBass(f.incoming.audio, true, f.progress, f.bassWidth);
-      norm.holdBass(f.outgoing.audio, false, f.progress, f.bassWidth);
+      norm.holdBass(f.incoming.audio, true, f.progress, f.bassWidth, f.bassOpts);
+      norm.holdBass(f.outgoing.audio, false, f.progress, f.bassWidth, f.bassOpts);
     }
+    if (f.filter) norm.holdLowpass(f.outgoing.audio, f.progress);
   }
 
   /** The fade is over: stop and detach the old deck */
@@ -1468,10 +2044,13 @@ class Player extends Emitter {
     clearInterval(f.monitor);
     clearInterval(f.armTimer);
     f.armTimer = null;
+    f.looper?.stop();
+    f.looper = null;
     if (f.onPlaying) f.incoming.audio.removeEventListener('playing', f.onPlaying);
     // Restoring the bypass must not expose dry outgoing audio while song memory is finalized.
-    if (f.style === 'dropcut') this.normalizer.setFade(f.outgoing.audio, 0);
+    if (f.style === 'dropcut' || f.echoScheduled) this.normalizer.setFade(f.outgoing.audio, 0);
     this.normalizer.clearDropCut(f.outgoing.audio);
+    this.normalizer.clearEchoOut(f.outgoing.audio);
     this.stopListening(f.outgoing.audio);
     this.releaseDeck(f.outgoing);
     this.beats.unwatch(f.outgoing.audio);
@@ -1488,8 +2067,9 @@ class Player extends Emitter {
         if (!this.current || this.current.id !== o.trackId) { this.mixOutcome = null; return; }
         if (this.audio.currentTime - o.position >= 20) {
           this.mixOutcome = null;
+          this.recordPair(o, 'good');
           mixlearn.record(o.choice, 'good');
-          this.logMix('good', `You kept ${quote(this.current)} after a ${o.choice.style === 'dropcut' ? 'drop cut' : 'smooth blend'}: learning for ${mixlearn.describeBucket(o.choice.bucket)}`);
+          this.logMix('good', `You kept ${quote(this.current)} after a ${styleLabel(o.choice.style)}: learning for ${mixlearn.describeBucket(o.choice.bucket)}`);
           return;
         }
         if (++checks > 30) { this.mixOutcome = null; return; }
@@ -1534,6 +2114,19 @@ class Player extends Emitter {
 
   // ---- remember the session across restarts ----------------------------------
 
+  /** A song's backup copies as saved: up to four (what an import keeps), strings capped, the copy that is playing always among them */
+  savedCopies(track) {
+    const cap = (v, n) => typeof v === 'string' ? v.slice(0, n) : v;
+    const slimCopy = (a) => ({
+      id: a.id, kind: 'track', source: a.source, sourceId: cap(a.sourceId, 64), title: cap(a.title, 200), duration: a.duration,
+      permalink_url: cap(a.permalink_url, 300), user: a.user && { id: a.user.id, username: cap(a.user.username, 100) }
+    });
+    const playing = track === this.current && this.copyOf?.track === track && this.copyOf.index > 0 ? track.alternates[this.copyOf.index - 1] : null;
+    const list = track.alternates.filter(a => a && a !== playing).slice(0, playing ? 3 : 4);
+    if (playing) list.unshift(playing);
+    return list.map(slimCopy);
+  }
+
   /** Save what's playing, where, and the queue (slimmed down so it fits in storage) */
   saveSession() {
     if (!this.current) return;
@@ -1542,7 +2135,10 @@ class Player extends Emitter {
       artwork_url: t.artwork_url, permalink_url: t.permalink_url, waveform_url: t.waveform_url,
       station_urn: t.station_urn, genre: t.genre, playback_count: t.playback_count,
       likes_count: t.likes_count, reposts_count: t.reposts_count, comment_count: t.comment_count,
-      user: t.user && { id: t.user.id, username: t.user.username, avatar_url: t.user.avatar_url, permalink_url: t.user.permalink_url }
+      user: t.user && { id: t.user.id, username: t.user.username, avatar_url: t.user.avatar_url, permalink_url: t.user.permalink_url },
+      // songs from Audius / Bandcamp, and the other copies to try if this one won't play
+      source: t.source, sourceId: t.sourceId,
+      alternates: Array.isArray(t.alternates) ? this.savedCopies(t) : undefined
     });
     // keep the queue around the current song, capped so storage never overflows
     const start = Math.max(0, this.index - 50);
@@ -1554,7 +2150,11 @@ class Player extends Emitter {
       context: this.context ? { label: this.context.label, href: this.context.href } : null,
       savedAt: Date.now()
     };
-    try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (e) { /* storage full */ }
+    try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (e) {
+      // storage full: keep the backup copies of the current song only, then give up
+      queue.forEach((t, i) => { if (i !== session.index) delete session.queue[i].alternates; });
+      try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (e2) { /* still full */ }
+    }
   }
 
   /** Put the last session back in the player bar, paused at the same spot */
@@ -1621,8 +2221,10 @@ class Player extends Emitter {
       this.index = 0;
     } else if (settings.autoplayRelated && this.current) {
       // like soundcloud.com: keep playing related tracks
+      // two quick presses share one fetch: only the first moves on (the queue and position tell whether someone already did)
+      const queue = this.queue, from = this.index;
       const added = await this.appendRelated();
-      if (!added) return;
+      if (!added || this.queue !== queue || this.index !== from) return;
       this.index++;
     } else {
       return;
@@ -1633,6 +2235,8 @@ class Player extends Emitter {
 
   appendRelated() {
     const current = this.current;
+    // related songs come from SoundCloud's own id for a track, which Audius and Bandcamp copies don't have
+    if (isExternal(current)) return Promise.resolve(false);
     const queue = this.queue;
     const rev = this.queueRev;
     // the look-ahead and a press of Next can both ask: share one fetch
@@ -1688,6 +2292,10 @@ class Player extends Emitter {
     if (!this.current) return;
     this.clearMixOutcome();
     if (this.fading?.style === 'dropcut') { this.cutFade(); this.stopLock(); }
+    else if (this.fading?.variant === 'echo-out') this.cutFade();
+    else if (this.fading?.looper) this.abortLoop(this.fading, 'you moved the playhead');
+    // the beat lock compares the two songs' positions: after a seek mid-blend it would chase a stale phase, so let go
+    if (this.fading && this.lock) this.stopLock();
     this.audio.currentTime = Math.max(0, Math.min(seconds, this.duration - 0.25));
   }
 

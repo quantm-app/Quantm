@@ -9,10 +9,21 @@ export class ApiError extends Error {
   }
 }
 
-export async function request(method, resource, params, body) {
+export async function request(method, resource, params, body, checked = false) {
   const response = await window.native.api({ method, resource, params, body });
+  // SoundCloud's bot check blocked the request before it ran: let the user pass it, then try again
+  if (!response.ok && !checked && response.data && response.data.error === 'human_check') {
+    if (await humanCheck(response.data.url)) return request(method, resource, params, body, true);
+  }
   if (!response.ok) throw new ApiError(response.status, response.data);
   return response.data;
+}
+
+// several blocked requests at once share one check window
+let pendingCheck = null;
+function humanCheck(url) {
+  if (!pendingCheck) pendingCheck = Promise.resolve(window.native.humanCheck(url)).finally(() => { pendingCheck = null; });
+  return pendingCheck;
 }
 
 export const get = (resource, params) => request('GET', resource, params);
