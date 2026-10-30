@@ -23,6 +23,7 @@
       "preload.js",
       "check-preload.js",
       "human-check.js",
+      "tag-page.js",
       "updater.js",
       "offline.js",
       "crashlog.js",

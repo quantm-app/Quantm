@@ -149,3 +149,150 @@ test('datadomeFromHeader reads the datadome cookie from an x-set-cookie header',
     assert.equal(datadomeFromHeader(bad), null, String(bad).slice(0, 20));
   }
 });
+
+test('isTagPageUrl and shouldBlockTagPageRequest keep the tag page small and on soundcloud.com', () => {
+  const h = require('../human-check.js');
+  assert.equal(h.isTagPageUrl('https://soundcloud.com/'), true);
+  for (const bad of ['https://soundcloud.com/discover', 'http://soundcloud.com/', 'https://soundcloud.com', 'https://evil.com/', 'https://geo.captcha-delivery.com/captcha/', '', undefined]) {
+    assert.equal(h.isTagPageUrl(bad), false, String(bad));
+  }
+  assert.equal(h.shouldBlockTagPageRequest('https://a-v2.sndcdn.com/assets/app-1.js', 'script'), true);
+  assert.equal(h.shouldBlockTagPageRequest('https://i1.sndcdn.com/artworks-1.jpg', 'image'), true);
+  assert.equal(h.shouldBlockTagPageRequest('https://cf-media.sndcdn.com/x.mp3', 'media'), true);
+  // never the tag, the captcha or the API
+  assert.equal(h.shouldBlockTagPageRequest('https://dwt.soundcloud.com/tags.js', 'script'), false);
+  assert.equal(h.shouldBlockTagPageRequest('https://geo.captcha-delivery.com/captcha/', 'subFrame'), false);
+  assert.equal(h.shouldBlockTagPageRequest('https://geo.captcha-delivery.com/c.js', 'script'), false);
+  assert.equal(h.shouldBlockTagPageRequest('https://api-v2.soundcloud.com/me', 'xhr'), false);
+  assert.equal(h.shouldBlockTagPageRequest('https://evilsndcdn.com/a.js', 'script'), false);
+  assert.equal(h.shouldBlockTagPageRequest('https://sndcdn.com.evil.com/a.js', 'script'), false);
+  assert.equal(h.shouldBlockTagPageRequest('not a url', 'script'), false);
+  // other kinds of request on sndcdn.com are left alone
+  assert.equal(h.shouldBlockTagPageRequest('https://a-v2.sndcdn.com/x', 'xhr'), false);
+});
+
+test('tagHeaders sends no Origin, Referer, Cookie or client id', () => {
+  const { tagHeaders } = require('../human-check.js');
+  assert.deepEqual(tagHeaders('tok', false), { Authorization: 'OAuth tok', Accept: 'application/json' });
+  assert.deepEqual(tagHeaders('tok', true), { Authorization: 'OAuth tok', Accept: 'application/json', 'Content-Type': 'application/json' });
+});
+
+test('isHumanCheckResult recognises the DataDome 403 only', () => {
+  const { isHumanCheckResult } = require('../human-check.js');
+  const body = JSON.stringify({ error: 'human_check', url: 'https://geo.captcha-delivery.com/captcha/?initialCid=x' });
+  assert.equal(isHumanCheckResult(403, body), true);
+  assert.equal(isHumanCheckResult(200, body), false);
+  assert.equal(isHumanCheckResult(403, '{"error":"forbidden"}'), false);
+  assert.equal(isHumanCheckResult(403, JSON.stringify({ url: 'https://evil.com/captcha' })), false);
+  assert.equal(isHumanCheckResult(403, 'not json'), false);
+  assert.equal(isHumanCheckResult(403, undefined), false);
+});
+
+test('responseFromPage gives a Response with status, headers, text() and json()', async () => {
+  const { responseFromPage } = require('../human-check.js');
+  const res = responseFromPage({ status: 201, contentType: 'application/json; charset=utf-8', text: '{"ok":true}' });
+  assert.equal(res.status, 201);
+  assert.equal(res.ok, true);
+  assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8');
+  assert.deepEqual(await res.clone().json(), { ok: true });
+  assert.equal(await res.text(), '{"ok":true}');
+  // a status without a body (204) and an error status
+  const empty = responseFromPage({ status: 204, contentType: '', text: '' });
+  assert.equal(empty.status, 204);
+  assert.equal(await empty.text(), '');
+  const blocked = responseFromPage({ status: 403, contentType: 'application/json', text: '{"error":"x"}' });
+  assert.equal(blocked.ok, false);
+  assert.equal(await blocked.text(), '{"error":"x"}');
+});
+
+test('tagFetchScript carries every value through JSON and returns status, content type and text', async () => {
+  const vm = require('node:vm');
+  const { tagFetchScript } = require('../human-check.js');
+  const nasty = 'https://api-v2.soundcloud.com/users/1/track_likes/2?client_id=a"b\'c\\d\n</script>';
+  let seen = null;
+  const context = vm.createContext({
+    AbortSignal,
+    fetch: async (url, init) => {
+      seen = { url, init };
+      return { status: 403, headers: { get: (n) => (n === 'content-type' ? 'application/json' : null) }, text: async () => '{"error":"human_check"}' };
+    }
+  });
+  const script = tagFetchScript({ url: nasty, method: 'PUT', headers: { Authorization: 'OAuth t"k', Accept: 'application/json' }, body: '{"a":"b\\"c"}', timeoutMs: 1234 });
+  const result = await vm.runInContext(script, context);
+  assert.deepEqual({ ...result }, { status: 403, contentType: 'application/json', text: '{"error":"human_check"}' });
+  assert.equal(seen.url, nasty);
+  assert.equal(seen.init.method, 'PUT');
+  assert.equal(seen.init.credentials, 'include');
+  assert.deepEqual(Object.keys(seen.init.headers).sort(), ['Accept', 'Authorization']);
+  assert.equal(seen.init.headers.Authorization, 'OAuth t"k');
+  assert.equal(seen.init.body, '{"a":"b\\"c"}');
+  assert.ok(seen.init.signal);
+
+  // no body: no body option; a failing fetch comes back as { error }
+  let init = null;
+  const none = vm.createContext({ AbortSignal, fetch: async (url, options) => { init = options; throw new Error('boom'); } });
+  assert.deepEqual({ ...(await vm.runInContext(tagFetchScript({ url: 'https://x/', method: 'DELETE', headers: {}, body: null }), none)) }, { error: 'boom' });
+  assert.equal('body' in init, false);
+});
+
+test('tag page listener and wait scripts resolve passed, blocked or timeout', async () => {
+  const vm = require('node:vm');
+  const { tagListenScript, tagWaitScript, TAG_READY_SCRIPT } = require('../human-check.js');
+  const fresh = () => {
+    const window = new EventTarget();
+    return { window, context: vm.createContext({ window, Promise, setTimeout, clearTimeout }) };
+  };
+  const fire = (window, name) => window.dispatchEvent(new Event(name));
+
+  // the tag passes BEFORE anyone waits (it can take only about 1.5 s): the outcome is not lost
+  let t = fresh();
+  assert.equal(vm.runInContext(tagListenScript(), t.context), true);
+  fire(t.window, 'dd_response_displayed');
+  fire(t.window, 'dd_response_passed');
+  assert.equal(t.window.__quantmDD.shown, true);
+  assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'passed');
+
+  // passed while waiting
+  t = fresh();
+  vm.runInContext(tagListenScript(), t.context);
+  const waiting = vm.runInContext(tagWaitScript(5000), t.context);
+  setTimeout(() => fire(t.window, 'dd_response_passed'), 5);
+  assert.equal(await waiting, 'passed');
+
+  for (const name of ['dd_blocked', 'dd_response_error']) {
+    t = fresh();
+    vm.runInContext(tagListenScript(), t.context);
+    fire(t.window, name);
+    assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'blocked', name);
+  }
+
+  // the first outcome wins
+  t = fresh();
+  vm.runInContext(tagListenScript(), t.context);
+  fire(t.window, 'dd_blocked');
+  fire(t.window, 'dd_response_passed');
+  assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'blocked');
+
+  // installing again drops the previous request's listeners: an old event can't settle the new request
+  t = fresh();
+  vm.runInContext(tagListenScript(), t.context);
+  const first = t.window.__quantmDD;
+  vm.runInContext(tagListenScript(), t.context);
+  assert.notEqual(t.window.__quantmDD, first);
+  fire(t.window, 'dd_response_passed');
+  assert.equal(await Promise.race([first.passed, new Promise((resolve) => setTimeout(() => resolve('still waiting'), 20))]), 'still waiting');
+  assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'passed');
+
+  // nothing happens: timeout; no listeners installed at all: blocked, not a hang
+  t = fresh();
+  vm.runInContext(tagListenScript(), t.context);
+  assert.equal(await vm.runInContext(tagWaitScript(20), t.context), 'timeout');
+  t = fresh();
+  assert.equal(await vm.runInContext(tagWaitScript(20), t.context), 'blocked');
+
+  // the readiness probe: false on a plain window, true when the tag's options object exists or fetch is wrapped
+  const probe = (g) => vm.runInContext(TAG_READY_SCRIPT, vm.createContext(g));
+  assert.equal(probe({ window: { fetch: function fetch() { return 1; } }, Function }), true);
+  assert.equal(probe({ window: { dataDomeOptions: {} }, Function }), true);
+  assert.equal(probe({ window: {}, Function }), false);
+});

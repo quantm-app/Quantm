@@ -9,7 +9,8 @@ const updates = require('./updater');
 const offline = require('./offline');
 const crashlog = require('./crashlog');
 const importSources = require('./import-sources');
-const { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed, datadomeFromHeader } = require('./human-check');
+const { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed, datadomeFromHeader, tagHeaders, responseFromPage } = require('./human-check');
+const { createTagPage } = require('./tag-page');
 
 // downloaded tracks are served to the page as quantm-offline://...; must be set up before ready
 offline.registerScheme();
@@ -188,6 +189,16 @@ function validApiRequest(request) {
 // clearance cookie it sets is then sent with later requests, exactly like in a browser.
 const CHECK_PARTITION = 'persist:soundcloud-check';
 let checkWindow = null;
+
+// Writes are sent from a hidden soundcloud.com page that runs SoundCloud's own DataDome tag (tag-page.js)
+const tagPage = createTagPage({
+  BrowserWindow,
+  getSession: () => apiSession(),
+  partition: CHECK_PARTITION,
+  getMainWindow: () => mainWindow,
+  log: (message) => logCheck(message),
+  apiTimeout: 30000
+});
 
 let checkPassedAt = 0; // when the last human check passed (ms), to tell whether a block right after it persists
 
@@ -438,28 +449,48 @@ async function apiRequest({ method = 'GET', resource, params, body }, retried = 
     return { ok: false, status: 400, data: { error: 'blocked_host' } };
   }
 
-  const clientId = await ddClientId();
-  if (checkPassedAt && checkPassedAt !== clientIdLoggedFor && recentlyPassed(checkPassedAt, Date.now())) {
-    clientIdLoggedFor = checkPassedAt;
-    logCheck('first request after the check, session header sent: ' + !!clientId);
+  let response = null;
+
+  // Writes go through the tag page, which handles DataDome's check itself. null: it isn't available, send directly.
+  if (method !== 'GET' && method !== 'HEAD') {
+    const sent = await tagPage.request({
+      url: url.toString(),
+      method,
+      headers: tagHeaders(auth.token, body !== undefined),
+      body: body !== undefined ? JSON.stringify(body) : null
+    });
+    if (sent) {
+      // 'human_check_failed', not 'human_check': the check was already shown in the tag page, so the renderer must not open a second one
+      if (sent.humanCheckFailed) return { ok: false, status: 403, data: { error: 'human_check_failed' } };
+      // the request may have reached SoundCloud: never retried blindly
+      if (sent.error) return { ok: false, status: 0, data: { error: 'network', message: sent.error, uncertain: true } };
+      response = responseFromPage(sent);
+    }
   }
 
-  let response;
-  try {
-    // credentials 'include': cookies are sent from, and Set-Cookie is stored in, the check's partition
-    response = await apiSession().fetch(url.toString(), {
-      method,
-      headers: apiHeaders(auth.token, body !== undefined, clientId),
-      credentials: 'include',
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(API_TIMEOUT)
-    });
-    await storeRefreshedClientId(response);
-  } catch (error) {
-    // transient connection resets happen; retry reads once. Writes are never retried blindly:
-    // the first attempt may have reached SoundCloud (a duplicate comment or playlist).
-    if (!retried && SAFE_METHODS.has(method)) return apiRequest({ method, resource, params, body }, true);
-    return { ok: false, status: 0, data: { error: 'network', message: error.message, uncertain: !SAFE_METHODS.has(method) } };
+  if (!response) {
+    const clientId = await ddClientId();
+    if (checkPassedAt && checkPassedAt !== clientIdLoggedFor && recentlyPassed(checkPassedAt, Date.now())) {
+      clientIdLoggedFor = checkPassedAt;
+      logCheck('first request after the check, session header sent: ' + !!clientId);
+    }
+
+    try {
+      // credentials 'include': cookies are sent from, and Set-Cookie is stored in, the check's partition
+      response = await apiSession().fetch(url.toString(), {
+        method,
+        headers: apiHeaders(auth.token, body !== undefined, clientId),
+        credentials: 'include',
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(API_TIMEOUT)
+      });
+      await storeRefreshedClientId(response);
+    } catch (error) {
+      // transient connection resets happen; retry reads once. Writes are never retried blindly:
+      // the first attempt may have reached SoundCloud (a duplicate comment or playlist).
+      if (!retried && SAFE_METHODS.has(method)) return apiRequest({ method, resource, params, body }, true);
+      return { ok: false, status: 0, data: { error: 'network', message: error.message, uncertain: !SAFE_METHODS.has(method) } };
+    }
   }
 
   // SoundCloud wants the user to prove they're human: the renderer shows the check and retries
@@ -815,7 +846,7 @@ function createMainWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => { mainWindow = null; tagPage.destroy(); });
 }
 
 // ---------------------------------------------------------------------------
@@ -1115,6 +1146,7 @@ if (!app.requestSingleInstanceLock()) {
   // make sure the latest theme and settings are on disk however the app closes
   let flushed = false;
   app.on('before-quit', (event) => {
+    tagPage.destroy(); // a hidden page must never hold up quitting
     if (flushed) return;
     event.preventDefault();
     flushed = true;

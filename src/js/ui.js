@@ -1256,7 +1256,7 @@ export async function addToPlaylistDialog(track) {
           toast(already ? `Removed from "${pl.title}"` : `Added to "${pl.title}"`);
           store().emit('playlists');
         } catch (e) {
-          toast(e && e.data && e.data.error === 'human_check'
+          toast(e && e.data && (e.data.error === 'human_check' || e.data.error === 'human_check_failed')
             ? "SoundCloud's human check wasn't completed, so the playlist didn't change"
             : "Couldn't update the playlist", 'error');
         }
