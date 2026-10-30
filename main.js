@@ -9,6 +9,7 @@ const updates = require('./updater');
 const offline = require('./offline');
 const crashlog = require('./crashlog');
 const importSources = require('./import-sources');
+const { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie } = require('./human-check');
 
 // downloaded tracks are served to the page as quantm-offline://...; must be set up before ready
 offline.registerScheme();
@@ -188,17 +189,6 @@ function validApiRequest(request) {
 const CHECK_PARTITION = 'persist:soundcloud-check';
 let checkWindow = null;
 
-/** The human-check page URL in a blocked response, or null (https captcha-delivery.com only) */
-function humanCheckUrl(data) {
-  const raw = data && typeof data === 'object' ? data.url : null;
-  try {
-    const url = new URL(String(raw));
-    return url.protocol === 'https:' && /(^|\.)captcha-delivery\.com$/.test(url.hostname) ? url.toString() : null;
-  } catch (e) {
-    return null;
-  }
-}
-
 async function clearanceCookie() {
   try {
     const [cookie] = await session.fromPartition(CHECK_PARTITION).cookies.get({ url: 'https://api-v2.soundcloud.com/', name: 'datadome' });
@@ -208,15 +198,9 @@ async function clearanceCookie() {
   }
 }
 
-/** "datadome=VALUE; Max-Age=...; Domain=.soundcloud.com; ..." from the check's answer -> cookie details */
-function clearanceFrom(text) {
-  let data;
-  try { data = JSON.parse(text); } catch (e) { return null; }
-  const header = data && typeof data.cookie === 'string' ? data.cookie : '';
-  const match = /^datadome=([^;\s]+)/.exec(header);
-  if (!match) return null;
-  const maxAge = Number((/max-age=(\d+)/i.exec(header) || [])[1]) || 365 * 24 * 3600;
-  return { value: match[1], expirationDate: Math.floor(Date.now() / 1000) + maxAge };
+/** URL without its query string or fragment, so logs never carry tokens */
+function bare(url) {
+  return String(url || '').split(/[?#]/)[0];
 }
 
 /** Steps of the check, without any cookie values, for diagnosing a check that doesn't finish */
@@ -226,7 +210,7 @@ function logCheck(message) {
   } catch (e) { /* logging is best effort */ }
 }
 
-/** Show SoundCloud's human check; resolves true once the user has passed it */
+/** Show SoundCloud's human check; resolves true once the user has passed it (or closed it with a clearance stored) */
 function openHumanCheck(url) {
   if (checkWindow) {
     checkWindow.focus();
@@ -235,6 +219,7 @@ function openHumanCheck(url) {
   return new Promise((resolve) => {
     const checkSession = session.fromPartition(CHECK_PARTITION);
     let done = false;
+    let cleared = false; // a clearance (message or cookie candidate) was stored since this check opened
     const finish = (passed) => {
       if (done) return;
       done = true;
@@ -243,60 +228,157 @@ function openHumanCheck(url) {
       checkWindow = null;
       resolve(passed);
     };
+    // A datadome cookie on captcha-delivery.com can also be an init or rotated value from an unsolved
+    // challenge, so it is only a candidate: it is stored, but never finishes the check by itself.
+    // Cookies the page already had at open time (or sets before it has navigated) are not even that.
+    let navigated = false;
+    const presentAtOpen = new Set();
+    checkSession.cookies.get({ name: 'datadome' }).then((all) => all.forEach((c) => presentAtOpen.add(c.domain + '|' + c.value))).catch(() => {});
     const onCookie = (event, cookie, cause, removed) => {
-      if (!removed && cookie.name === 'datadome' && /(^|\.)soundcloud\.com$/.test(cookie.domain.replace(/^\./, ''))) {
-        logCheck('clearance cookie stored');
-        setTimeout(() => finish(true), 600);
+      if (removed || cookie.name !== 'datadome') return;
+      // Fallback without the postMessage: the captcha page may keep the clearance in its own domain
+      const clearance = navigated && !presentAtOpen.has(cookie.domain + '|' + cookie.value) ? clearanceFromCookie(cookie) : null;
+      if (clearance) {
+        storeClearance(clearance, 'cookie').catch((e) => logCheck('could not store the clearance: ' + e.message));
       }
     };
     checkSession.cookies.on('changed', onCookie);
     checkWindow = new BrowserWindow({
       width: 460, height: 620, title: 'SoundCloud check', parent: mainWindow || undefined, modal: !!mainWindow,
       autoHideMenuBar: true, backgroundColor: '#ffffff',
-      webPreferences: { partition: CHECK_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false }
-    });
-    checkWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    checkWindow.webContents.on('will-navigate', (event, target) => {
-      if (!/^https:\/\//.test(target)) event.preventDefault();
-    });
-    checkWindow.on('closed', () => { logCheck('window closed'); finish(false); });
-
-    // On soundcloud.com the check runs inside SoundCloud's page and hands the clearance to it.
-    // Here it is the whole window, so read its answer when the user passes and store the clearance
-    // for soundcloud.com ourselves.
-    const watched = new Set();
-    const dbg = checkWindow.webContents.debugger;
-    try {
-      dbg.attach('1.3');
-      dbg.sendCommand('Network.enable').catch(() => {});
-    } catch (e) {
-      logCheck('could not watch the check: ' + e.message);
-    }
-    dbg.on('message', async (event, method, params) => {
-      if (method === 'Network.responseReceived') {
-        const responseUrl = params.response && params.response.url || '';
-        if (/^https:\/\/[^/]*captcha-delivery\.com\//.test(responseUrl)) {
-          logCheck('response ' + params.response.status + ' ' + responseUrl.split('?')[0] + ' ' + (params.response.mimeType || ''));
-          if (/json|text\/plain/.test(params.response.mimeType || '')) watched.add(params.requestId);
-        }
-      } else if (method === 'Network.loadingFinished' && watched.has(params.requestId)) {
-        watched.delete(params.requestId);
-        try {
-          const { body, base64Encoded } = await dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId });
-          const clearance = clearanceFrom(base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body);
-          if (!clearance) return;
-          logCheck('check passed, clearance received');
-          await checkSession.cookies.set({
-            url: 'https://soundcloud.com/', name: 'datadome', value: clearance.value, domain: '.soundcloud.com',
-            path: '/', secure: true, sameSite: 'lax', expirationDate: clearance.expirationDate
-          });
-        } catch (e) {
-          logCheck('could not read the check answer: ' + e.message);
-        }
+      webPreferences: {
+        partition: CHECK_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false,
+        preload: path.join(__dirname, 'check-preload.js')
       }
     });
-    logCheck('check opened');
-    checkWindow.loadURL(url);
+    const wc = checkWindow.webContents;
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+    // The window only ever shows captcha pages
+    const guardNavigation = (event, target) => {
+      const to = typeof target === 'string' ? target : event && event.url;
+      if (isCaptchaUrl(to)) return;
+      event.preventDefault();
+      let host = '?';
+      try { host = new URL(String(to)).hostname || '?'; } catch (e) { /* not a URL */ }
+      logCheck('blocked navigation to ' + redact(host));
+    };
+    wc.on('will-navigate', guardNavigation);
+    wc.on('will-redirect', guardNavigation);
+    // Closing the window yourself counts as passed only when a clearance was stored since it opened
+    checkWindow.on('closed', () => {
+      if (!done) logCheck('window closed by the user, ' + (cleared ? 'a clearance was stored: counting as passed' : 'no clearance was stored'));
+      finish(cleared);
+    });
+
+    // On soundcloud.com the check runs inside SoundCloud's page and hands the clearance to it.
+    // Here it is the whole window, so pick up its answer when the user passes and store the clearance
+    // for soundcloud.com ourselves.
+    let storedValue = null;
+    const storeClearance = async (clearance, how) => {
+      if (clearance.value !== storedValue) {
+        logCheck(how === 'cookie' ? 'clearance candidate (cookie)' : 'check passed, clearance received (' + how + ')');
+        await checkSession.cookies.set({
+          url: 'https://soundcloud.com/', name: 'datadome', value: clearance.value, domain: '.soundcloud.com',
+          path: '/', secure: true, sameSite: 'lax', expirationDate: clearance.expirationDate
+        });
+        storedValue = clearance.value;
+      }
+      cleared = true;
+    };
+    // Only an explicit success finishes the check on its own
+    const succeed = async (clearance, how) => {
+      await storeClearance(clearance, how);
+      finish(true);
+    };
+
+    // Default: a tiny preload reads the captcha's postMessage answer. No debugger is attached because
+    // DataDome's captcha detects it and refuses to show the puzzle.
+    const onClearance = (event, cookie) => {
+      if (event.sender !== wc || typeof cookie !== 'string' || cookie.length > 4096) return;
+      // only from a captcha-delivery.com frame, not whatever else the window might hold
+      if (!event.senderFrame || !isCaptchaUrl(event.senderFrame.url)) return;
+      const clearance = clearanceFrom(cookie);
+      if (clearance) succeed(clearance, 'message').catch((e) => logCheck('could not store the clearance: ' + e.message));
+    };
+    ipcMain.on('check:clearance', onClearance);
+    checkWindow.on('closed', () => ipcMain.removeListener('check:clearance', onClearance));
+
+    // For comparison only: QUANTM_CHECK_DEBUGGER=1 reads the /captcha/check response over the debugger
+    const debuggerMode = process.env.QUANTM_CHECK_DEBUGGER === '1';
+    if (debuggerMode) {
+      const watched = new Set();
+      const dbg = wc.debugger;
+      try {
+        dbg.attach('1.3');
+        dbg.sendCommand('Network.enable').catch(() => {});
+      } catch (e) {
+        logCheck('could not watch the check: ' + e.message);
+      }
+      dbg.on('message', async (event, method, params) => {
+        if (method === 'Network.responseReceived') {
+          const responseUrl = params.response && params.response.url || '';
+          if (/^https:\/\/[^/]*captcha-delivery\.com\//.test(responseUrl)) {
+            logCheck('response ' + params.response.status + ' ' + bare(responseUrl) + ' ' + (params.response.mimeType || ''));
+            if (/json|text\/plain/.test(params.response.mimeType || '')) watched.add(params.requestId);
+          }
+        } else if (method === 'Network.loadingFinished' && watched.has(params.requestId)) {
+          watched.delete(params.requestId);
+          try {
+            const { body, base64Encoded } = await dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId });
+            const clearance = clearanceFrom(base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body);
+            if (clearance) await succeed(clearance, 'debugger');
+          } catch (e) {
+            logCheck('could not read the check answer: ' + e.message);
+          }
+        }
+      });
+    }
+
+    // Diagnostics without devtools: what the page complains about, where it goes, how it dies
+    wc.on('console-message', (event, level, message, line, sourceId) => {
+      // older Electron passes (event, level, message, line, sourceId); newer passes one details object
+      let lvl = level, text = message, src = sourceId, ln = line;
+      if (event && typeof event.level === 'string') ({ level: lvl, message: text, sourceId: src, lineNumber: ln } = event);
+      if (lvl !== 2 && lvl !== 3 && lvl !== 'warning' && lvl !== 'error') return;
+      const file = bare(src).split(/[/\\]/).pop();
+      logCheck('page ' + (lvl === 2 || lvl === 'warning' ? 'warning' : 'error') + ' ' + redact(text) + ' (' + file + ':' + ln + ')');
+    });
+    wc.on('did-fail-load', (event, code, description, failedUrl) => logCheck('load failed ' + code + ' ' + description + ' ' + bare(failedUrl)));
+    wc.on('did-navigate', (event, navUrl) => { navigated = true; logCheck('navigated ' + bare(navUrl)); });
+    wc.on('did-navigate-in-page', (event, navUrl) => logCheck('navigated in page ' + bare(navUrl)));
+    wc.on('render-process-gone', (event, details) => logCheck('render process gone: ' + (details && details.reason)));
+    wc.on('preload-error', (event, preloadPath, error) => logCheck('preload error: ' + (error && error.message)));
+
+    // Test hook (unpackaged only): screenshots of the check, since devtools can't be attached to it
+    const shotDir = !app.isPackaged && process.env.QUANTM_CHECK_SHOT;
+    if (shotDir) {
+      // Armed at open (not on did-finish-load) so both modes capture the same way. capturePage can
+      // return an empty image while the page hasn't painted (or the window counts as occluded), so
+      // keep painting alive and retry until there are pixels; never write an empty file.
+      wc.setBackgroundThrottling(false);
+      const capture = async (seconds) => {
+        for (let attempt = 1; attempt <= 6; attempt++) {
+          try {
+            if (wc.isDestroyed()) return;
+            wc.invalidate();
+            const image = await wc.capturePage();
+            if (!image.isEmpty()) {
+              fs.mkdirSync(shotDir, { recursive: true });
+              fs.writeFileSync(path.join(shotDir, 'check-' + seconds + 's.png'), image.toPNG());
+              logCheck('screenshot saved check-' + seconds + 's.png (attempt ' + attempt + ')');
+              return;
+            }
+          } catch (e) {
+            logCheck('could not capture the check: ' + e.message);
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        logCheck('screenshot empty check-' + seconds + 's.png');
+      };
+      [4, 10].forEach((seconds) => setTimeout(() => capture(seconds), seconds * 1000));
+    }
+    logCheck('check opened (' + (debuggerMode ? 'debugger' : 'message') + ' mode)');
+    wc.loadURL(url);
   });
 }
 

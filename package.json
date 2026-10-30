@@ -21,6 +21,8 @@
     "files": [
       "main.js",
       "preload.js",
+      "check-preload.js",
+      "human-check.js",
       "updater.js",
       "offline.js",
       "crashlog.js",
