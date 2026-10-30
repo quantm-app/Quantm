@@ -118,3 +118,51 @@ test('recentlyPassed is true only within 60 s after a passed check', () => {
   assert.equal(recentlyPassed(1000, 61001), false);
   assert.equal(recentlyPassed(5000, 1000), false);
 });
+
+test('pageFetchScript builds a script with every value JSON-escaped and no browser-owned headers', () => {
+  const { pageFetchScript, apiHeaders } = require('../human-check.js');
+  const nasty = '";alert(1);//\'`${x}\n';
+  const script = pageFetchScript('https://api-v2.soundcloud.com/users/1/track_likes/2?client_id=' + nasty, {
+    method: 'put',
+    headers: Object.assign(apiHeaders('tok' + nasty, true), { cookie: 'x=y', Host: 'evil' }),
+    body: JSON.stringify({ a: nasty }),
+    timeoutMs: 5000
+  });
+  // runs as an expression in a page; capture the fetch call instead of making it
+  let call;
+  const fakeFetch = async (url, init) => { call = { url, init }; return { status: 204, text: async () => '', headers: { get: () => null } }; };
+  const run = new Function('fetch', 'AbortSignal', 'return ' + script);
+  return run(fakeFetch, { timeout: (ms) => 'signal:' + ms }).then((result) => {
+    assert.equal(call.url, 'https://api-v2.soundcloud.com/users/1/track_likes/2?client_id=' + nasty);
+    assert.equal(call.init.method, 'PUT');
+    assert.equal(call.init.credentials, 'include');
+    assert.equal(call.init.mode, 'cors');
+    assert.equal(call.init.signal, 'signal:5000');
+    assert.equal(call.init.body, JSON.stringify({ a: nasty }));
+    assert.equal(call.init.headers.Authorization, 'OAuth tok' + nasty);
+    assert.deepEqual(Object.keys(call.init.headers).sort(), ['Accept', 'Authorization', 'Content-Type']);
+    assert.deepEqual(result, { status: 204, headers: { 'content-type': '' }, text: '' });
+  });
+});
+
+test('pageFetchScript sends no body when there is none', () => {
+  const { pageFetchScript } = require('../human-check.js');
+  assert.ok(!pageFetchScript('https://api-v2.soundcloud.com/x', { method: 'DELETE' }).includes('"body"'));
+});
+
+test('pageResponse gives apiRequest the parts of a fetch Response it uses', async () => {
+  const { pageResponse } = require('../human-check.js');
+  const blocked = pageResponse({ status: 403, headers: { 'Content-Type': 'application/json' }, text: '{"error":"human_check"}' });
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.headers.get('content-type'), 'application/json');
+  assert.equal(blocked.headers.get('X-Missing'), null);
+  assert.deepEqual(JSON.parse(await blocked.clone().text()), { error: 'human_check' });
+  assert.equal(await blocked.text(), '{"error":"human_check"}');
+  assert.deepEqual(await blocked.json(), { error: 'human_check' });
+  const created = pageResponse({ status: 201, text: '' });
+  assert.equal(created.ok, true);
+  assert.equal(await created.text(), '');
+  assert.throws(() => pageResponse(null));
+  assert.throws(() => pageResponse({ status: 'x' }));
+});
