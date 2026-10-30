@@ -9,7 +9,7 @@ const updates = require('./updater');
 const offline = require('./offline');
 const crashlog = require('./crashlog');
 const importSources = require('./import-sources');
-const { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed, datadomeFromHeader, tagHeaders, responseFromPage } = require('./human-check');
+const { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed, datadomeFromHeader, tagHeaders, responseFromPage, isReadMethod } = require('./human-check');
 const { createTagPage } = require('./tag-page');
 
 // downloaded tracks are served to the page as quantm-offline://...; must be set up before ready
@@ -462,6 +462,8 @@ async function apiRequest({ method = 'GET', resource, params, body }, retried = 
     if (sent) {
       // 'human_check_failed', not 'human_check': the check was already shown in the tag page, so the renderer must not open a second one
       if (sent.humanCheckFailed) return { ok: false, status: 403, data: { error: 'human_check_failed' } };
+      // the app is quitting: nothing was sent, and it must not be sent directly either
+      if (sent.cancelled) return { ok: false, status: 0, data: { error: 'cancelled' } };
       // the request may have reached SoundCloud: never retried blindly
       if (sent.error) return { ok: false, status: 0, data: { error: 'network', message: sent.error, uncertain: true } };
       response = responseFromPage(sent);
@@ -504,13 +506,14 @@ async function apiRequest({ method = 'GET', resource, params, body }, retried = 
     }
   }
 
-  // a stale client_id gives 401/403 even with a valid token: refresh it once
+  // a stale client_id gives 401/403 even with a valid token: refresh it once, and re-send reads
   if ((response.status === 401 || response.status === 403) && !retried) {
     try {
       const clientId = await scrapeClientId();
       if (clientId !== auth.clientId) {
-        saveAuth({ token: auth.token, clientId });
-        return apiRequest({ method, resource, params, body }, true);
+        saveAuth({ token: auth.token, clientId }); // kept for later requests
+        // only reads are sent again: a write may have been replayed after a human check already
+        if (isReadMethod(method)) return apiRequest({ method, resource, params, body }, true);
       }
     } catch (e) { /* fall through with the original error */ }
   }
@@ -1146,7 +1149,7 @@ if (!app.requestSingleInstanceLock()) {
   // make sure the latest theme and settings are on disk however the app closes
   let flushed = false;
   app.on('before-quit', (event) => {
-    tagPage.destroy(); // a hidden page must never hold up quitting
+    tagPage.destroy(true); // a hidden page must never hold up quitting, and nothing is sent from it any more
     if (flushed) return;
     event.preventDefault();
     flushed = true;

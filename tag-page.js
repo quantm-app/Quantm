@@ -9,15 +9,26 @@
 // null and the caller falls back to sending from the main process, so nothing gets worse.
 
 const {
-  TAG_PAGE_URL, isTagPageUrl, shouldBlockTagPageRequest, TAG_READY_SCRIPT, tagListenScript, tagWaitScript,
+  TAG_PAGE_URL, allowTagPageNavigation, shouldBlockTagPageRequest, TAG_READY_SCRIPT, tagListenScript, tagWaitScript,
   tagFetchScript, isHumanCheckResult
 } = require('./human-check');
 
+const STARTUP_TIMEOUT = 20000; // the whole start: loading the page and waiting for the tag
 const READY_TIMEOUT = 15000; // how long to wait for the tag after the page has loaded
 const CAPTCHA_TIMEOUT = 3 * 60 * 1000; // how long the user gets to pass the captcha
+const SCRIPT_TIMEOUT = 10000; // a small script run in the page (installing the listeners) must answer within this
 const RETRY_AFTER_FAILURE = 60 * 1000; // after a failed start, send directly for this long before trying again
 
+const CANCELLED = { cancelled: true }; // the tag page was shut down: nothing was sent, and nothing may be sent
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The promise's value, or a rejection after `ms` (the main process never waits on the page forever) */
+function withDeadline(promise, ms) {
+  let timer;
+  const deadline = new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('timeout')), ms); });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
 
 /**
  * deps: BrowserWindow (electron), getSession() (the check partition's session, user agent set),
@@ -27,6 +38,10 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
   let page = null; // { win, id, ready: Promise<'ok' | 'load' | 'tag' | 'gone'> }
   let unavailableUntil = 0;
   let queue = Promise.resolve();
+  // Every destroy() starts a new generation. Work that began in an older one (queued, starting up, or between
+  // steps) stops at its next check: it never creates a window or sends a request after the page was destroyed.
+  let generation = 0;
+  let permanent = false; // set when the app quits: the page is never used again
   const blockedIds = new Set(); // webContents ids of tag pages, whose bundles and media are blocked
   let hookedSession = null;
 
@@ -58,13 +73,17 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
       }
     });
     const wc = win.webContents;
-    const entry = { win, id: wc.id, ready: null };
+    const entry = { win, id: wc.id, ready: null, closed: null };
+    entry.closed = new Promise((resolve) => win.once('closed', () => resolve('gone'))); // however it closes, a start never waits on it
     blockedIds.add(entry.id);
     wc.setAudioMuted(true);
     wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-    const guard = (event, target) => {
+    // Only the main frame is held to the homepage. will-redirect also fires for subframes, and the
+    // captcha iframe has to follow its own redirects.
+    const guard = (event, target, isInPlace, isMainFrame) => {
       const to = typeof target === 'string' ? target : event && event.url;
-      if (!isTagPageUrl(to)) event.preventDefault();
+      const main = event && typeof event.isMainFrame === 'boolean' ? event.isMainFrame : isMainFrame;
+      if (!allowTagPageNavigation(to, main)) event.preventDefault();
     };
     wc.on('will-navigate', guard);
     wc.on('will-redirect', guard);
@@ -81,8 +100,9 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
       try {
         await win.loadURL(TAG_PAGE_URL);
       } catch (e) {
+        if (win.isDestroyed()) return 'gone';
         log('tag page: load failed (' + String((e && e.code) || (e && e.message) || e).split(/[?#\s]/)[0].slice(0, 60) + ')');
-        return win.isDestroyed() ? 'gone' : 'load';
+        return 'load';
       }
       const deadline = Date.now() + READY_TIMEOUT;
       while (Date.now() < deadline) {
@@ -98,12 +118,24 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
     return entry;
   }
 
-  /** The ready page, or null when the tag page can't be used right now */
-  async function ensurePage() {
-    if (Date.now() < unavailableUntil) return null;
+  /** The ready page, null when it can't be used right now (nothing was sent: send directly), or CANCELLED */
+  async function ensurePage(gen) {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const entry = page && !page.win.isDestroyed() ? page : createPage();
-      const state = await entry.ready;
+      if (gen !== generation) return CANCELLED;
+      if (Date.now() < unavailableUntil) return null;
+      let entry;
+      try {
+        entry = page && !page.win.isDestroyed() ? page : createPage();
+      } catch (e) {
+        log('tag page: could not create the page (' + String((e && e.message) || e).slice(0, 80) + ')');
+        unavailableUntil = Date.now() + RETRY_AFTER_FAILURE;
+        return null;
+      }
+      // one deadline around the whole start (load and tag probe): the page may hang
+      let timer;
+      const state = await Promise.race([entry.ready, entry.closed, new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), STARTUP_TIMEOUT); })]);
+      clearTimeout(timer);
+      if (gen !== generation) { destroyEntry(entry); return CANCELLED; }
       if (state === 'ok' && !entry.win.isDestroyed()) {
         if (!entry.announced) { entry.announced = true; log('tag page ready'); }
         return entry;
@@ -111,6 +143,7 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
       destroyEntry(entry);
       if (state === 'gone') continue; // crashed or closed while starting: start a fresh one
       if (state === 'tag') log('tag page: tag missing, using direct requests');
+      else if (state === 'timeout') log('tag page: start timed out, using direct requests');
       else log('tag page: not available, using direct requests');
       unavailableUntil = Date.now() + RETRY_AFTER_FAILURE;
       return null;
@@ -142,8 +175,9 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
       win.once('closed', onClosed);
     });
     try {
+      // the page enforces the 3 minutes itself; this main-process deadline only covers a page that hangs
       return await Promise.race([
-        win.webContents.executeJavaScript(tagWaitScript(CAPTCHA_TIMEOUT)).catch(() => 'closed'),
+        withDeadline(win.webContents.executeJavaScript(tagWaitScript(CAPTCHA_TIMEOUT)), CAPTCHA_TIMEOUT + SCRIPT_TIMEOUT).catch(() => 'timeout'),
         closed
       ]);
     } finally {
@@ -152,38 +186,52 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
     }
   }
 
-  async function run({ url, method, headers, body }) {
-    const entry = await ensurePage();
+  async function run({ url, method, headers, body }, gen) {
+    const entry = await ensurePage(gen);
+    if (entry === CANCELLED) return CANCELLED;
     if (!entry) return null;
     const exec = (code) => entry.win.webContents.executeJavaScript(code);
+    // each fetch has a main-process deadline too: if the page hangs, the outcome is "uncertain"
     const send = async () => {
       const script = tagFetchScript({ url, method, headers, body, timeoutMs: apiTimeout });
       let timer;
       const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve({ error: 'timeout' }), apiTimeout + 5000); });
       try { return await Promise.race([exec(script), timeout]); } finally { clearTimeout(timer); }
     };
+    let maybeSent = false; // a request may have reached SoundCloud and run
 
     try {
-      await exec(tagListenScript()); // before the request: the tag can pass the captcha within about 1.5 s
+      await withDeadline(exec(tagListenScript()), SCRIPT_TIMEOUT); // before the request: the tag can pass the captcha within about 1.5 s
+      if (gen !== generation) return CANCELLED;
+      maybeSent = true;
       let result = await send();
       if (!result || result.error) return { error: (result && result.error) || 'no answer from the page' };
 
       if (isHumanCheckResult(result.status, result.text)) {
+        maybeSent = false; // the blocked request was rejected: it never ran
+        if (gen !== generation) return CANCELLED;
         log('tag page: captcha shown');
         const outcome = await awaitCaptcha(entry);
+        if (gen !== generation) return CANCELLED;
         if (outcome !== 'passed') {
           log('tag page: ' + outcome);
           destroyEntry(entry); // fresh page next time, without the leftover captcha
           return { humanCheckFailed: true };
         }
         log('tag page: passed');
-        result = await send(); // the one replay: the blocked request was rejected, so it never ran
+        maybeSent = true;
+        result = await send(); // the one replay
         if (!result || result.error) return { error: (result && result.error) || 'no answer from the page' };
         log('tag page: replay status ' + result.status);
       }
       if (isHumanCheckResult(result.status, result.text)) return { humanCheckFailed: true };
       return { status: result.status, contentType: result.contentType, text: result.text };
     } catch (e) {
+      if (!maybeSent) {
+        // nothing was sent: the page was shut down (stop), or it is broken (send directly)
+        destroyEntry(entry);
+        return gen !== generation ? CANCELLED : null;
+      }
       if (entry.win.isDestroyed()) destroyEntry(entry);
       return { error: String((e && e.message) || e).slice(0, 200) };
     }
@@ -193,16 +241,22 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
     /**
      * Send a request from the tag page: { url, method, headers, body } with body a string or null.
      * Resolves null when the tag page isn't available (send it directly), otherwise
-     * { status, contentType, text }, { humanCheckFailed: true } or { error }.
+     * { status, contentType, text }, { humanCheckFailed: true } or { error } (the request may have been sent),
+     * or { cancelled: true } when the page was shut down first (nothing was sent: do not send it any other way).
      * Requests run one at a time, so they never share the page's captcha.
      */
     request(options) {
-      const next = queue.then(() => run(options));
+      // after quitting, or with no main window, the page is not started again
+      if (permanent || !getMainWindow()) return Promise.resolve(CANCELLED);
+      const gen = generation;
+      const next = queue.then(() => run(options, gen));
       queue = next.catch(() => {});
       return next;
     },
-    /** Close the page (main window closed, app quitting) */
-    destroy() {
+    /** Close the page and cancel queued and in-flight work. `final`: the app is quitting, never use it again */
+    destroy(final) {
+      if (final) permanent = true;
+      generation++;
       if (page) destroyEntry(page);
     }
   };

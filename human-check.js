@@ -112,6 +112,14 @@ function isTagPageUrl(raw) {
   return raw === TAG_PAGE_URL;
 }
 
+/**
+ * True when the tag page may navigate to `url`. The exact-homepage rule is for the main frame only:
+ * Electron's will-redirect also fires for subframes, and the captcha iframe has to follow its own redirects.
+ */
+function allowTagPageNavigation(url, isMainFrame) {
+  return isMainFrame === false || isTagPageUrl(url);
+}
+
 const TAG_PAGE_BLOCKED_TYPES = new Set(['script', 'image', 'media', 'stylesheet', 'font']);
 
 /**
@@ -135,22 +143,24 @@ const TAG_READY_SCRIPT = '(function () { try { return (typeof window.dataDomeOpt
 
 /**
  * Page script, run BEFORE each request: installs listeners for the tag's events and stores the outcome
- * on window.__quantmDD. .passed is a promise that resolves 'passed' (dd_response_passed) or 'blocked'
- * (dd_blocked, dd_response_error), whichever comes first; the tag can pass within about 1.5 s of the 403.
+ * on window.__quantmDD. .passed is a promise that resolves 'passed' (dd_response_passed) or 'error'
+ * (dd_response_error), whichever comes first; the tag can pass within about 1.5 s of the 403.
+ * dd_blocked is only informational (DataDome intercepted a challenged response, and it fires BEFORE
+ * dd_response_passed even for challenges that pass by themselves): it sets .intercepted, nothing else.
  */
 function tagListenScript() {
   return '(function () {\n' +
     '  var names = ["dd_response_passed", "dd_response_displayed", "dd_response_error", "dd_blocked"];\n' +
     '  var previous = window.__quantmDD;\n' +
     '  if (previous && typeof previous.cleanup === "function") previous.cleanup();\n' +
-    '  var state = { shown: false };\n' +
+    '  var state = { shown: false, intercepted: false };\n' +
     '  var settle;\n' +
     '  state.passed = new Promise(function (resolve) { settle = resolve; });\n' +
     '  var handlers = {\n' +
     '    dd_response_displayed: function () { state.shown = true; },\n' +
     '    dd_response_passed: function () { settle("passed"); },\n' +
-    '    dd_response_error: function () { settle("blocked"); },\n' +
-    '    dd_blocked: function () { settle("blocked"); }\n' +
+    '    dd_response_error: function () { settle("error"); },\n' +
+    '    dd_blocked: function () { state.intercepted = true; }\n' +
     '  };\n' +
     '  state.cleanup = function () { names.forEach(function (n) { window.removeEventListener(n, handlers[n]); }); };\n' +
     '  names.forEach(function (n) { window.addEventListener(n, handlers[n]); });\n' +
@@ -159,11 +169,11 @@ function tagListenScript() {
     '})()';
 }
 
-/** Page script: resolves 'passed' / 'blocked' from the listeners above, or 'timeout' after `ms` */
+/** Page script: resolves 'passed' / 'error' from the listeners above, or 'timeout' after `ms` */
 function tagWaitScript(ms) {
   return '(function (ms) {\n' +
     '  var state = window.__quantmDD;\n' +
-    '  if (!state || !state.passed) return Promise.resolve("blocked");\n' +
+    '  if (!state || !state.passed) return Promise.resolve("error");\n' +
     '  var timer;\n' +
     '  var timeout = new Promise(function (resolve) { timer = setTimeout(function () { resolve("timeout"); }, ms); });\n' +
     '  return Promise.race([state.passed, timeout]).then(function (outcome) { clearTimeout(timer); return outcome; });\n' +
@@ -207,6 +217,11 @@ function isHumanCheckResult(status, text) {
   try { return humanCheckUrl(JSON.parse(text)) !== null; } catch (e) { return false; }
 }
 
+/** True for GET and HEAD: requests that can be sent again without doing anything twice */
+function isReadMethod(method) {
+  return method === 'GET' || method === 'HEAD';
+}
+
 /** { status, contentType, text } from the tag page -> a Response, so apiRequest handles it like a fetch result */
 function responseFromPage({ status, contentType, text }) {
   const body = typeof text === 'string' && text !== '' ? text : null;
@@ -215,6 +230,6 @@ function responseFromPage({ status, contentType, text }) {
 
 module.exports = {
   isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed, datadomeFromHeader,
-  TAG_PAGE_URL, isTagPageUrl, shouldBlockTagPageRequest, TAG_READY_SCRIPT, tagListenScript, tagWaitScript, tagFetchScript,
+  TAG_PAGE_URL, isTagPageUrl, allowTagPageNavigation, isReadMethod, shouldBlockTagPageRequest, TAG_READY_SCRIPT, tagListenScript, tagWaitScript, tagFetchScript,
   tagHeaders, isHumanCheckResult, responseFromPage
 };

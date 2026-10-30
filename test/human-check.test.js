@@ -259,19 +259,34 @@ test('tag page listener and wait scripts resolve passed, blocked or timeout', as
   setTimeout(() => fire(t.window, 'dd_response_passed'), 5);
   assert.equal(await waiting, 'passed');
 
-  for (const name of ['dd_blocked', 'dd_response_error']) {
-    t = fresh();
-    vm.runInContext(tagListenScript(), t.context);
-    fire(t.window, name);
-    assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'blocked', name);
-  }
+  // dd_response_error is a failure
+  t = fresh();
+  vm.runInContext(tagListenScript(), t.context);
+  fire(t.window, 'dd_response_error');
+  assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'error');
+
+  // dd_blocked only means DataDome intercepted the response: it comes BEFORE dd_response_passed, even for
+  // challenges that pass by themselves, so it never settles anything
+  t = fresh();
+  vm.runInContext(tagListenScript(), t.context);
+  fire(t.window, 'dd_blocked');
+  assert.equal(t.window.__quantmDD.intercepted, true);
+  assert.equal(await Promise.race([t.window.__quantmDD.passed, new Promise((resolve) => setTimeout(() => resolve('still waiting'), 20))]), 'still waiting');
+  fire(t.window, 'dd_response_displayed');
+  fire(t.window, 'dd_response_passed');
+  assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'passed');
+  // ... and a challenge that never passes times out instead of failing early
+  t = fresh();
+  vm.runInContext(tagListenScript(), t.context);
+  fire(t.window, 'dd_blocked');
+  assert.equal(await vm.runInContext(tagWaitScript(20), t.context), 'timeout');
 
   // the first outcome wins
   t = fresh();
   vm.runInContext(tagListenScript(), t.context);
-  fire(t.window, 'dd_blocked');
+  fire(t.window, 'dd_response_error');
   fire(t.window, 'dd_response_passed');
-  assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'blocked');
+  assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'error');
 
   // installing again drops the previous request's listeners: an old event can't settle the new request
   t = fresh();
@@ -283,16 +298,123 @@ test('tag page listener and wait scripts resolve passed, blocked or timeout', as
   assert.equal(await Promise.race([first.passed, new Promise((resolve) => setTimeout(() => resolve('still waiting'), 20))]), 'still waiting');
   assert.equal(await vm.runInContext(tagWaitScript(5000), t.context), 'passed');
 
-  // nothing happens: timeout; no listeners installed at all: blocked, not a hang
+  // nothing happens: timeout; no listeners installed at all: error, not a hang
   t = fresh();
   vm.runInContext(tagListenScript(), t.context);
   assert.equal(await vm.runInContext(tagWaitScript(20), t.context), 'timeout');
   t = fresh();
-  assert.equal(await vm.runInContext(tagWaitScript(20), t.context), 'blocked');
+  assert.equal(await vm.runInContext(tagWaitScript(20), t.context), 'error');
 
   // the readiness probe: false on a plain window, true when the tag's options object exists or fetch is wrapped
   const probe = (g) => vm.runInContext(TAG_READY_SCRIPT, vm.createContext(g));
   assert.equal(probe({ window: { fetch: function fetch() { return 1; } }, Function }), true);
   assert.equal(probe({ window: { dataDomeOptions: {} }, Function }), true);
   assert.equal(probe({ window: {}, Function }), false);
+});
+
+test('allowTagPageNavigation holds only the main frame to the homepage', () => {
+  const { allowTagPageNavigation } = require('../human-check.js');
+  assert.equal(allowTagPageNavigation('https://soundcloud.com/', true), true);
+  assert.equal(allowTagPageNavigation('https://soundcloud.com/discover', true), false);
+  assert.equal(allowTagPageNavigation('https://geo.captcha-delivery.com/captcha/', true), false);
+  // the captcha iframe follows its own redirects
+  assert.equal(allowTagPageNavigation('https://geo.captcha-delivery.com/interstitial/?x=1', false), true);
+  // unknown frame: strict
+  assert.equal(allowTagPageNavigation('https://evil.com/', undefined), false);
+});
+
+test('isReadMethod: only GET and HEAD are ever sent again automatically', () => {
+  const { isReadMethod } = require('../human-check.js');
+  assert.equal(isReadMethod('GET'), true);
+  assert.equal(isReadMethod('HEAD'), true);
+  for (const m of ['PUT', 'POST', 'DELETE', 'PATCH', 'get', undefined]) assert.equal(isReadMethod(m), false, String(m));
+});
+
+// A tag page with a fake window: nothing is sent and no window is made after destroy()
+function fakeTagPage(options = {}) {
+  const { EventEmitter } = require('node:events');
+  const h = require('../human-check.js');
+  const { createTagPage } = require('../tag-page.js');
+  const state = { windows: 0, fetches: 0, log: [], mainWindow: {}, hold: null };
+  class FakeWebContents extends EventEmitter {
+    constructor(win) { super(); this.win = win; this.id = 40 + state.windows; }
+    setAudioMuted() {}
+    setWindowOpenHandler() {}
+    async executeJavaScript(code) {
+      if (this.win.destroyed) throw new Error('Object has been destroyed');
+      if (code === h.TAG_READY_SCRIPT) return true;
+      if (code.includes('__quantmDD = state')) return true;
+      if (code.includes('await fetch(')) {
+        state.fetches++;
+        if (state.hold) await state.hold;
+        if (this.win.destroyed) throw new Error('Object has been destroyed');
+        return { status: 200, contentType: 'application/json', text: '{}' };
+      }
+      throw new Error('unexpected script');
+    }
+  }
+  class FakeWindow extends EventEmitter {
+    constructor() { super(); state.windows++; this.destroyed = false; this.webContents = new FakeWebContents(this); }
+    loadURL() { return options.load ? options.load() : Promise.resolve(); }
+    isDestroyed() { return this.destroyed; }
+    destroy() { this.destroyed = true; this.emit('closed'); }
+  }
+  const ses = { webRequest: { onBeforeRequest() {} } };
+  const tagPage = createTagPage({
+    BrowserWindow: FakeWindow, getSession: () => ses, partition: 'p', getMainWindow: () => state.mainWindow,
+    log: (m) => state.log.push(m), apiTimeout: 1000
+  });
+  return { tagPage, state };
+}
+const writeRequest = { url: 'https://api-v2.soundcloud.com/x', method: 'PUT', headers: {}, body: null };
+
+test('tag page: a normal write is sent from the page', async () => {
+  const { tagPage, state } = fakeTagPage();
+  assert.deepEqual({ ...(await tagPage.request(writeRequest)) }, { status: 200, contentType: 'application/json', text: '{}' });
+  assert.equal(state.fetches, 1);
+  assert.equal(state.windows, 1);
+});
+
+test('tag page: destroy() during start-up settles without a new window or a request', async () => {
+  const { tagPage, state } = fakeTagPage({ load: () => new Promise(() => {}) }); // the page never finishes loading
+  const pending = tagPage.request(writeRequest);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(state.windows, 1);
+  tagPage.destroy();
+  assert.deepEqual({ ...(await pending) }, { cancelled: true });
+  assert.equal(state.windows, 1);
+  assert.equal(state.fetches, 0);
+});
+
+test('tag page: queued writes are cancelled by destroy() and never sent', async () => {
+  const { tagPage, state } = fakeTagPage();
+  let release;
+  state.hold = new Promise((resolve) => { release = resolve; });
+  const first = tagPage.request(writeRequest); // in flight, held in the page
+  const second = tagPage.request(writeRequest); // queued behind it
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(state.fetches, 1);
+  tagPage.destroy();
+  release();
+  const [a, b] = await Promise.all([first, second]);
+  assert.ok(a.error, 'the one that was already sent is uncertain');
+  assert.deepEqual({ ...b }, { cancelled: true });
+  assert.equal(state.fetches, 1);
+  assert.equal(state.windows, 1);
+});
+
+test('tag page: after destroy(true) or without a main window nothing is sent', async () => {
+  let t = fakeTagPage();
+  t.tagPage.destroy(true);
+  assert.deepEqual({ ...(await t.tagPage.request(writeRequest)) }, { cancelled: true });
+  assert.equal(t.state.windows, 0);
+  t = fakeTagPage();
+  t.state.mainWindow = null;
+  assert.deepEqual({ ...(await t.tagPage.request(writeRequest)) }, { cancelled: true });
+  // a plain destroy() (main window closed) lets a later request start a new page while a main window exists
+  t = fakeTagPage();
+  await t.tagPage.request(writeRequest);
+  t.tagPage.destroy();
+  assert.equal((await t.tagPage.request(writeRequest)).status, 200);
+  assert.equal(t.state.windows, 2);
 });
