@@ -61,4 +61,23 @@ function clearanceFromCookie(cookie) {
   return { value: cookie.value, expirationDate };
 }
 
-module.exports = { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie };
+/**
+ * Headers for an api-v2 request. There is deliberately no Cookie header: the datadome clearance (and
+ * the cookie DataDome rotates on every protected response) lives in one cookie jar, which the request
+ * sends and updates itself (see apiRequest in main.js).
+ */
+function apiHeaders(token, hasBody) {
+  return Object.assign({
+    Authorization: 'OAuth ' + token,
+    Accept: 'application/json',
+    Origin: 'https://soundcloud.com',
+    Referer: 'https://soundcloud.com/'
+  }, hasBody ? { 'Content-Type': 'application/json' } : {});
+}
+
+/** True when a human check was passed at `passedAt` (ms) and `now` is within `windowMs` of it */
+function recentlyPassed(passedAt, now, windowMs = 60000) {
+  return typeof passedAt === 'number' && passedAt > 0 && now >= passedAt && now - passedAt <= windowMs;
+}
+
+module.exports = { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed };

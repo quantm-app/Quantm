@@ -99,3 +99,22 @@ test('redact leaves normal text alone and caps the length', () => {
   assert.equal(redact('x'.repeat(10) + ' y '.repeat(100)).length, 200);
   assert.equal(redact(undefined), 'undefined');
 });
+
+test('apiHeaders never sets a Cookie header (the cookie jar sends the clearance)', () => {
+  const { apiHeaders } = require('../human-check.js');
+  const get = apiHeaders('tok', false);
+  assert.deepEqual(Object.keys(get).sort(), ['Accept', 'Authorization', 'Origin', 'Referer']);
+  assert.equal(get.Authorization, 'OAuth tok');
+  const post = apiHeaders('tok', true);
+  assert.equal(post['Content-Type'], 'application/json');
+  for (const headers of [get, post]) assert.ok(!Object.keys(headers).some((k) => k.toLowerCase() === 'cookie'));
+});
+
+test('recentlyPassed is true only within 60 s after a passed check', () => {
+  const { recentlyPassed } = require('../human-check.js');
+  assert.equal(recentlyPassed(0, 1000), false);
+  assert.equal(recentlyPassed(1000, 31000), true);
+  assert.equal(recentlyPassed(1000, 61000), true);
+  assert.equal(recentlyPassed(1000, 61001), false);
+  assert.equal(recentlyPassed(5000, 1000), false);
+});

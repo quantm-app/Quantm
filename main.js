@@ -9,7 +9,7 @@ const updates = require('./updater');
 const offline = require('./offline');
 const crashlog = require('./crashlog');
 const importSources = require('./import-sources');
-const { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie } = require('./human-check');
+const { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed } = require('./human-check');
 
 // downloaded tracks are served to the page as quantm-offline://...; must be set up before ready
 offline.registerScheme();
@@ -189,13 +189,29 @@ function validApiRequest(request) {
 const CHECK_PARTITION = 'persist:soundcloud-check';
 let checkWindow = null;
 
-async function clearanceCookie() {
+let checkPassedAt = 0; // when the last human check passed (ms), to tell whether a block right after it persists
+
+/**
+ * The one cookie jar for api-v2 requests: the check's partition. The clearance the check stores lands
+ * here, requests send it from here, and the datadome cookie DataDome rotates in each protected response
+ * (Set-Cookie) is stored back here, so the clearance never goes stale.
+ */
+function apiSession() {
+  const apiSes = session.fromPartition(CHECK_PARTITION);
+  if (apiSes.getUserAgent() !== CHROME_UA) apiSes.setUserAgent(CHROME_UA);
+  return apiSes;
+}
+
+/** Drop datadome cookies a previous build left in the default session (best effort) */
+async function clearStaleDatadome() {
   try {
-    const [cookie] = await session.fromPartition(CHECK_PARTITION).cookies.get({ url: 'https://api-v2.soundcloud.com/', name: 'datadome' });
-    return cookie ? cookie.value : null;
-  } catch (e) {
-    return null;
-  }
+    const stale = await session.defaultSession.cookies.get({ name: 'datadome' });
+    for (const cookie of stale) {
+      const host = String(cookie.domain || '').replace(/^\./, '');
+      if (!host) continue;
+      await session.defaultSession.cookies.remove((cookie.secure ? 'https://' : 'http://') + host + (cookie.path || '/'), 'datadome').catch(() => {});
+    }
+  } catch (e) { /* best effort */ }
 }
 
 /** URL without its query string or fragment, so logs never carry tokens */
@@ -226,6 +242,7 @@ function openHumanCheck(url) {
       checkSession.cookies.removeListener('changed', onCookie);
       if (checkWindow && !checkWindow.isDestroyed()) checkWindow.close();
       checkWindow = null;
+      if (passed) checkPassedAt = Date.now();
       resolve(passed);
     };
     // A datadome cookie on captcha-delivery.com can also be an init or rotated value from an unsolved
@@ -391,17 +408,13 @@ async function apiRequest({ method = 'GET', resource, params, body }, retried = 
     return { ok: false, status: 400, data: { error: 'blocked_host' } };
   }
 
-  const clearance = await clearanceCookie();
   let response;
   try {
-    response = await net.fetch(url.toString(), {
+    // credentials 'include': cookies are sent from, and Set-Cookie is stored in, the check's partition
+    response = await apiSession().fetch(url.toString(), {
       method,
-      headers: Object.assign({
-        Authorization: 'OAuth ' + auth.token,
-        Accept: 'application/json',
-        Origin: 'https://soundcloud.com',
-        Referer: 'https://soundcloud.com/'
-      }, body !== undefined ? { 'Content-Type': 'application/json' } : {}, clearance ? { Cookie: 'datadome=' + clearance } : {}),
+      headers: apiHeaders(auth.token, body !== undefined),
+      credentials: 'include',
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(API_TIMEOUT)
     });
@@ -417,7 +430,10 @@ async function apiRequest({ method = 'GET', resource, params, body }, retried = 
     let blocked = null;
     try { blocked = JSON.parse(await response.clone().text()); } catch (e) { /* not the check page */ }
     const checkUrl = humanCheckUrl(blocked);
-    if (checkUrl) return { ok: false, status: 403, data: { error: 'human_check', url: checkUrl } };
+    if (checkUrl) {
+      if (recentlyPassed(checkPassedAt, Date.now())) logCheck('still blocked after passing (status 403)');
+      return { ok: false, status: 403, data: { error: 'human_check', url: checkUrl } };
+    }
   }
 
   // a stale client_id gives 401/403 even with a valid token: refresh it once
@@ -1045,6 +1061,7 @@ if (!app.requestSingleInstanceLock()) {
     crashlog.sessionStarted();
     registerNotificationIdentity();
     auth = loadAuth();
+    clearStaleDatadome();
     offline.handleScheme();
     createMainWindow();
     updates.init({
