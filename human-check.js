@@ -62,17 +62,37 @@ function clearanceFromCookie(cookie) {
 }
 
 /**
- * Headers for an api-v2 request. There is deliberately no Cookie header: the datadome clearance (and
- * the cookie DataDome rotates on every protected response) lives in one cookie jar, which the request
- * sends and updates itself (see apiRequest in main.js).
+ * Headers for an api-v2 request. There is deliberately no Cookie header: SoundCloud's DataDome tag runs
+ * in session-by-header mode for api-v2, so the session value goes in X-DataDome-ClientID instead, and
+ * the refreshed value comes back in the x-set-cookie response header (see apiRequest in main.js).
+ * The client id is only added when it is a non-empty string of at most 1024 characters without CR or LF.
  */
-function apiHeaders(token, hasBody) {
-  return Object.assign({
+function apiHeaders(token, hasBody, clientId) {
+  const headers = {
     Authorization: 'OAuth ' + token,
     Accept: 'application/json',
     Origin: 'https://soundcloud.com',
     Referer: 'https://soundcloud.com/'
-  }, hasBody ? { 'Content-Type': 'application/json' } : {});
+  };
+  if (hasBody) headers['Content-Type'] = 'application/json';
+  if (typeof clientId === 'string' && clientId && clientId.length <= 1024 && !/[\r\n]/.test(clientId)) {
+    headers['X-DataDome-ClientID'] = clientId;
+  }
+  return headers;
+}
+
+/**
+ * The datadome cookie in an x-set-cookie response header ("datadome=VALUE; Max-Age=...; Domain=...", possibly
+ * several cookies joined by commas) -> { value, expirationDate } like clearanceFrom, or null
+ */
+function datadomeFromHeader(header) {
+  if (typeof header !== 'string' || header.length > 8192) return null;
+  const parts = header.split(/,\s*(?=[A-Za-z0-9_.-]+=)/);
+  for (const part of parts) {
+    const clearance = clearanceFrom(part.trim());
+    if (clearance) return clearance;
+  }
+  return null;
 }
 
 /** True when a human check was passed at `passedAt` (ms) and `now` is within `windowMs` of it */
@@ -80,45 +100,4 @@ function recentlyPassed(passedAt, now, windowMs = 60000) {
   return typeof passedAt === 'number' && passedAt > 0 && now >= passedAt && now - passedAt <= windowMs;
 }
 
-// Headers the browser sets itself; a page fetch must not pass them (some would throw)
-const PAGE_FORBIDDEN_HEADERS = new Set(['origin', 'referer', 'cookie', 'host', 'user-agent', 'content-length']);
-
-/**
- * The script that sends one api-v2 request from inside a soundcloud.com page (see pageFetch in main.js).
- * Every value goes in through JSON.stringify, and the headers the browser owns are dropped. The script
- * resolves to { status, headers: { 'content-type' }, text }.
- */
-function pageFetchScript(url, { method = 'GET', headers = {}, body, timeoutMs = 30000 } = {}) {
-  const kept = {};
-  for (const [name, value] of Object.entries(headers || {})) {
-    if (!PAGE_FORBIDDEN_HEADERS.has(name.toLowerCase())) kept[name] = String(value);
-  }
-  const init = { method: String(method).toUpperCase(), headers: kept, credentials: 'include', mode: 'cors' };
-  if (body !== undefined && body !== null) init.body = String(body);
-  return '(async () => {\n' +
-    '  const init = ' + JSON.stringify(init) + ';\n' +
-    '  init.signal = AbortSignal.timeout(' + JSON.stringify(Math.max(1, Number(timeoutMs) || 30000)) + ');\n' +
-    '  const response = await fetch(' + JSON.stringify(String(url)) + ', init);\n' +
-    '  const text = await response.text();\n' +
-    "  return { status: response.status, headers: { 'content-type': response.headers.get('content-type') || '' }, text };\n" +
-    '})()';
-}
-
-/** The page fetch's plain result -> the part of a fetch Response that apiRequest uses */
-function pageResponse(raw) {
-  if (!raw || typeof raw !== 'object' || !Number.isInteger(raw.status)) throw new Error('bad page response');
-  const headers = {};
-  for (const [name, value] of Object.entries(raw.headers || {})) headers[name.toLowerCase()] = String(value);
-  const text = typeof raw.text === 'string' ? raw.text : '';
-  const response = {
-    status: raw.status,
-    ok: raw.status >= 200 && raw.status < 300,
-    headers: { get: (name) => (Object.prototype.hasOwnProperty.call(headers, String(name).toLowerCase()) ? headers[String(name).toLowerCase()] : null) },
-    text: async () => text,
-    json: async () => JSON.parse(text),
-    clone: () => response
-  };
-  return response;
-}
-
-module.exports = { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed, pageFetchScript, pageResponse };
+module.exports = { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed, datadomeFromHeader };

@@ -9,7 +9,7 @@ const updates = require('./updater');
 const offline = require('./offline');
 const crashlog = require('./crashlog');
 const importSources = require('./import-sources');
-const { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed, pageFetchScript, pageResponse } = require('./human-check');
+const { isCaptchaUrl, redact, humanCheckUrl, clearanceFrom, clearanceFromCookie, apiHeaders, recentlyPassed, datadomeFromHeader } = require('./human-check');
 
 // downloaded tracks are served to the page as quantm-offline://...; must be set up before ready
 offline.registerScheme();
@@ -202,74 +202,34 @@ function apiSession() {
   return apiSes;
 }
 
-// Main-process fetches never send SameSite=Lax cookies, which is what the datadome clearance is, so
-// writes (the requests DataDome protects) are sent from a hidden page on soundcloud.com in the same
-// partition. From there api-v2.soundcloud.com is same-site: the clearance goes along and the cookies
-// DataDome rotates are stored natively.
-const API_PAGE_URL = 'https://soundcloud.com/robots.txt';
-let apiPage = null; // { win, ready } while the helper window exists
+let clientIdLoggedFor = 0; // the checkPassedAt for which the "session header sent" line was logged
 
-function dropApiPage(page) {
-  if (apiPage === page) apiPage = null;
-  if (page.win && !page.win.isDestroyed()) page.win.destroy();
-}
-
-/** Closes the helper window; it is never shown, so it must not outlive the app's real windows */
-function closeApiPage() {
-  if (apiPage) dropApiPage(apiPage);
-}
-
-/** The hidden helper page's webContents, once it has loaded; created on first use and again after a failure */
-function getApiPage() {
-  if (apiPage && !apiPage.win.isDestroyed()) return apiPage.ready;
-  apiSession(); // sets the user agent before the page loads
-  const win = new BrowserWindow({
-    show: false,
-    webPreferences: { partition: CHECK_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false }
-  });
-  const page = { win, ready: null };
-  apiPage = page;
-  const wc = win.webContents;
-  wc.setAudioMuted(true);
-  wc.setBackgroundThrottling(false);
-  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-  const stay = (event, target) => {
-    const to = typeof target === 'string' ? target : event && event.url;
-    if (to !== API_PAGE_URL) event.preventDefault();
-  };
-  wc.on('will-navigate', stay);
-  wc.on('will-redirect', stay);
-  wc.on('render-process-gone', (event, details) => {
-    logCheck('api page process gone: ' + redact(details && details.reason));
-    dropApiPage(page);
-  });
-  win.on('closed', () => { if (apiPage === page) apiPage = null; });
-  page.ready = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('api page load timed out')), API_TIMEOUT);
-    win.loadURL(API_PAGE_URL).then(() => resolve(wc), (e) => reject(e)).finally(() => clearTimeout(timer));
-  });
-  page.ready.catch((e) => {
-    logCheck('api page failed to load: ' + redact(e && e.message));
-    dropApiPage(page);
-  });
-  return page.ready;
-}
-
-/** One request from inside the soundcloud.com helper page: { status, headers, text } (throws on a network error or timeout) */
-async function pageFetch(url, { method, headers, body, timeoutMs = API_TIMEOUT }) {
-  const wc = await getApiPage();
-  if (wc.isDestroyed()) throw new Error('api page closed');
-  let timer;
+/**
+ * The DataDome session value for api-v2 requests: SoundCloud's tag runs in session-by-header mode, so it is
+ * sent as X-DataDome-ClientID, not as a cookie. It is kept as the datadome cookie in the check's partition.
+ * Prefers the .soundcloud.com cookie; null when there is none.
+ */
+async function ddClientId() {
   try {
-    return await Promise.race([
-      wc.executeJavaScript(pageFetchScript(url, { method, headers, body, timeoutMs })),
-      new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('timeout')), timeoutMs + 2000); })
-    ]);
+    const all = await apiSession().cookies.get({ url: 'https://api-v2.soundcloud.com', name: 'datadome' });
+    const usable = all.filter((c) => c && typeof c.value === 'string' && c.value);
+    const best = usable.find((c) => String(c.domain || '') === '.soundcloud.com') || usable[0];
+    return best ? best.value : null;
   } catch (e) {
-    throw new Error(redact(e && e.message || 'page fetch failed'));
-  } finally {
-    clearTimeout(timer);
+    return null;
   }
+}
+
+/** Store the refreshed session value from an api-v2 response's x-set-cookie header, like the check does (best effort, never logs the value) */
+async function storeRefreshedClientId(response) {
+  try {
+    const clearance = datadomeFromHeader(response && response.headers && response.headers.get('x-set-cookie'));
+    if (!clearance) return;
+    await apiSession().cookies.set({
+      url: 'https://soundcloud.com/', name: 'datadome', value: clearance.value, domain: '.soundcloud.com',
+      path: '/', secure: true, sameSite: 'lax', expirationDate: clearance.expirationDate
+    });
+  } catch (e) { /* best effort */ }
 }
 
 /** Drop datadome cookies a previous build left in the default session (best effort) */
@@ -478,25 +438,23 @@ async function apiRequest({ method = 'GET', resource, params, body }, retried = 
     return { ok: false, status: 400, data: { error: 'blocked_host' } };
   }
 
+  const clientId = await ddClientId();
+  if (checkPassedAt && checkPassedAt !== clientIdLoggedFor && recentlyPassed(checkPassedAt, Date.now())) {
+    clientIdLoggedFor = checkPassedAt;
+    logCheck('first request after the check, session header sent: ' + !!clientId);
+  }
+
   let response;
   try {
     // credentials 'include': cookies are sent from, and Set-Cookie is stored in, the check's partition
-    if (method !== 'GET' && method !== 'HEAD') {
-      response = pageResponse(await pageFetch(url.toString(), {
-        method,
-        headers: apiHeaders(auth.token, body !== undefined),
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        timeoutMs: API_TIMEOUT
-      }));
-    } else {
-      response = await apiSession().fetch(url.toString(), {
-        method,
-        headers: apiHeaders(auth.token, body !== undefined),
-        credentials: 'include',
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(API_TIMEOUT)
-      });
-    }
+    response = await apiSession().fetch(url.toString(), {
+      method,
+      headers: apiHeaders(auth.token, body !== undefined, clientId),
+      credentials: 'include',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(API_TIMEOUT)
+    });
+    await storeRefreshedClientId(response);
   } catch (error) {
     // transient connection resets happen; retry reads once. Writes are never retried blindly:
     // the first attempt may have reached SoundCloud (a duplicate comment or playlist).
@@ -857,7 +815,7 @@ function createMainWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
-  mainWindow.on('closed', () => { mainWindow = null; closeApiPage(); });
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
 // ---------------------------------------------------------------------------
@@ -1157,7 +1115,6 @@ if (!app.requestSingleInstanceLock()) {
   // make sure the latest theme and settings are on disk however the app closes
   let flushed = false;
   app.on('before-quit', (event) => {
-    closeApiPage();
     if (flushed) return;
     event.preventDefault();
     flushed = true;
