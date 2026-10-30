@@ -16,6 +16,7 @@ const {
 const STARTUP_TIMEOUT = 20000; // the whole start: loading the page and waiting for the tag
 const READY_TIMEOUT = 15000; // how long to wait for the tag after the page has loaded
 const CAPTCHA_TIMEOUT = 3 * 60 * 1000; // how long the user gets to pass the captcha
+const SHOW_DELAY = 4000; // the check window only appears if the captcha hasn't passed on its own by then
 const SCRIPT_TIMEOUT = 10000; // a small script run in the page (installing the listeners) must answer within this
 const RETRY_AFTER_FAILURE = 60 * 1000; // after a failed start, send directly for this long before trying again
 
@@ -32,9 +33,9 @@ function withDeadline(promise, ms) {
 
 /**
  * deps: BrowserWindow (electron), getSession() (the check partition's session, user agent set),
- * partition (its name), getMainWindow(), log(message) (no secrets), apiTimeout (ms)
+ * partition (its name), getMainWindow(), log(message) (no secrets), apiTimeout (ms), showDelay (ms, for tests)
  */
-function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, log, apiTimeout = 30000 }) {
+function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, log, apiTimeout = 30000, showDelay = SHOW_DELAY }) {
   let page = null; // { win, id, ready: Promise<'ok' | 'load' | 'tag' | 'gone'> }
   let unavailableUntil = 0;
   let queue = Promise.resolve();
@@ -153,9 +154,8 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
     return null;
   }
 
-  /** Show the page (it is displaying SoundCloud's captcha) over the main window and wait for the outcome */
-  async function awaitCaptcha(entry) {
-    const win = entry.win;
+  /** Show the page (it is displaying SoundCloud's captcha) over the main window */
+  function showOverMain(win) {
     const main = getMainWindow();
     try {
       if (main && !main.isDestroyed() && !main.isMinimized() && main.isVisible()) {
@@ -168,21 +168,42 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
       win.show();
       win.focus();
     } catch (e) { /* shown wherever it is */ }
+  }
 
+  /**
+   * Wait for the captcha's outcome ('passed', 'error', 'timeout' or 'closed'). The window stays hidden for
+   * the first `showDelay` ms, because the tag usually passes by itself within about 1.5 s; only a captcha
+   * that is still open after that is shown to the user. The wait is one 3 minute wait, not extended by the delay.
+   */
+  async function awaitCaptcha(entry, gen) {
+    const win = entry.win;
     let onClosed;
     const closed = new Promise((resolve) => {
       onClosed = () => resolve('closed');
       win.once('closed', onClosed);
     });
+    let shown = false;
+    let timer;
     try {
       // the page enforces the 3 minutes itself; this main-process deadline only covers a page that hangs
-      return await Promise.race([
+      const settled = Promise.race([
         withDeadline(win.webContents.executeJavaScript(tagWaitScript(CAPTCHA_TIMEOUT)), CAPTCHA_TIMEOUT + SCRIPT_TIMEOUT).catch(() => 'timeout'),
         closed
       ]);
+      const early = await Promise.race([settled, new Promise((resolve) => { timer = setTimeout(() => resolve(null), showDelay); })]);
+      if (early !== null) {
+        if (early === 'passed') log('tag page: passed without showing');
+        return { outcome: early, shown };
+      }
+      if (gen !== generation || win.isDestroyed()) return { outcome: 'closed', shown };
+      showOverMain(win);
+      shown = true;
+      log('tag page: captcha shown');
+      return { outcome: await settled, shown };
     } finally {
+      clearTimeout(timer);
       try { win.removeListener('closed', onClosed); } catch (e) { /* destroyed */ }
-      try { if (!win.isDestroyed()) win.hide(); } catch (e) { /* destroyed */ }
+      try { if (shown && !win.isDestroyed()) win.hide(); } catch (e) { /* destroyed */ }
     }
   }
 
@@ -210,15 +231,14 @@ function createTagPage({ BrowserWindow, getSession, partition, getMainWindow, lo
       if (isHumanCheckResult(result.status, result.text)) {
         maybeSent = false; // the blocked request was rejected: it never ran
         if (gen !== generation) return CANCELLED;
-        log('tag page: captcha shown');
-        const outcome = await awaitCaptcha(entry);
+        const { outcome, shown } = await awaitCaptcha(entry, gen);
         if (gen !== generation) return CANCELLED;
         if (outcome !== 'passed') {
           log('tag page: ' + outcome);
           destroyEntry(entry); // fresh page next time, without the leftover captcha
           return { humanCheckFailed: true };
         }
-        log('tag page: passed');
+        if (shown) log('tag page: passed');
         maybeSent = true;
         result = await send(); // the one replay
         if (!result || result.error) return { error: (result && result.error) || 'no answer from the page' };

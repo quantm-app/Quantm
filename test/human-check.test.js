@@ -335,7 +335,10 @@ function fakeTagPage(options = {}) {
   const { EventEmitter } = require('node:events');
   const h = require('../human-check.js');
   const { createTagPage } = require('../tag-page.js');
-  const state = { windows: 0, fetches: 0, log: [], mainWindow: {}, hold: null };
+  const state = { windows: 0, fetches: 0, shows: 0, hides: 0, log: [], hold: null };
+  state.mainWindow = {
+    isDestroyed: () => false, isMinimized: () => false, isVisible: () => true, getBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 })
+  };
   class FakeWebContents extends EventEmitter {
     constructor(win) { super(); this.win = win; this.id = 40 + state.windows; }
     setAudioMuted() {}
@@ -344,8 +347,15 @@ function fakeTagPage(options = {}) {
       if (this.win.destroyed) throw new Error('Object has been destroyed');
       if (code === h.TAG_READY_SCRIPT) return true;
       if (code.includes('__quantmDD = state')) return true;
+      if (code.includes('Promise.race')) { // the captcha wait: passes after options.passAfter ms
+        await new Promise((resolve) => setTimeout(resolve, options.passAfter || 0));
+        return 'passed';
+      }
       if (code.includes('await fetch(')) {
         state.fetches++;
+        if (options.captcha && state.fetches === 1) {
+          return { status: 403, contentType: 'application/json', text: JSON.stringify({ error: 'human_check', url: 'https://geo.captcha-delivery.com/captcha/?a=1' }) };
+        }
         if (state.hold) await state.hold;
         if (this.win.destroyed) throw new Error('Object has been destroyed');
         return { status: 200, contentType: 'application/json', text: '{}' };
@@ -357,12 +367,18 @@ function fakeTagPage(options = {}) {
     constructor() { super(); state.windows++; this.destroyed = false; this.webContents = new FakeWebContents(this); }
     loadURL() { return options.load ? options.load() : Promise.resolve(); }
     isDestroyed() { return this.destroyed; }
+    getSize() { return [420, 640]; }
+    setPosition() {}
+    center() {}
+    focus() {}
+    show() { state.shows++; }
+    hide() { state.hides++; }
     destroy() { this.destroyed = true; this.emit('closed'); }
   }
   const ses = { webRequest: { onBeforeRequest() {} } };
   const tagPage = createTagPage({
     BrowserWindow: FakeWindow, getSession: () => ses, partition: 'p', getMainWindow: () => state.mainWindow,
-    log: (m) => state.log.push(m), apiTimeout: 1000
+    log: (m) => state.log.push(m), apiTimeout: 1000, showDelay: options.showDelay
   });
   return { tagPage, state };
 }
@@ -417,4 +433,34 @@ test('tag page: after destroy(true) or without a main window nothing is sent', a
   t.tagPage.destroy();
   assert.equal((await t.tagPage.request(writeRequest)).status, 200);
   assert.equal(t.state.windows, 2);
+});
+
+test('tag page: the check window stays hidden when the captcha passes by itself, and appears when it does not', async () => {
+  // quick pass: never shown, replayed once
+  let t = fakeTagPage({ captcha: true, passAfter: 10, showDelay: 150 });
+  assert.equal((await t.tagPage.request(writeRequest)).status, 200);
+  assert.equal(t.state.shows, 0);
+  assert.equal(t.state.fetches, 2);
+  assert.ok(t.state.log.includes('tag page: passed without showing'));
+  assert.ok(!t.state.log.includes('tag page: captcha shown'));
+
+  // slow: shown after the delay, hidden again once it passes, then replayed once
+  t = fakeTagPage({ captcha: true, passAfter: 200, showDelay: 30 });
+  assert.equal((await t.tagPage.request(writeRequest)).status, 200);
+  assert.equal(t.state.shows, 1);
+  assert.equal(t.state.hides, 1);
+  assert.equal(t.state.fetches, 2);
+  assert.ok(t.state.log.includes('tag page: captcha shown'));
+  assert.ok(t.state.log.includes('tag page: passed'));
+  assert.ok(!t.state.log.includes('tag page: passed without showing'));
+});
+
+test('tag page: a destroy() while the captcha is still hidden never shows it', async () => {
+  const t = fakeTagPage({ captcha: true, passAfter: 300, showDelay: 40 });
+  const pending = t.tagPage.request(writeRequest);
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  t.tagPage.destroy();
+  assert.deepEqual({ ...(await pending) }, { cancelled: true });
+  assert.equal(t.state.shows, 0);
+  assert.equal(t.state.fetches, 1);
 });
