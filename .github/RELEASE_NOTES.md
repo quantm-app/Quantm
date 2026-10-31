@@ -1,5 +1,9 @@
 **🚫 No ads**: no audio ads, banners or promoted tracks. Free and open source.
 
+## What's new in 1.2.4
+
+- **Likes work again.** SoundCloud started asking for a "prove you're human" check on likes, and Quantm couldn't get past it. Likes, reposts, follows, comments and playlist changes now go through a hidden SoundCloud page, the same way the website sends them, so they normally just work. If SoundCloud still wants you to prove you're human, a small window opens for the check.
+
 ## What's new in 1.2.3
 
 - **Import a Spotify playlist.** In Library → Quantm, press "Import from Spotify", paste the link to a public Spotify playlist, and Quantm saves it as a Quantm playlist on your computer. Quantm can't play from Spotify, so it looks for each song on SoundCloud first, then Audius, then Bandcamp. You get a summary of what it found where, and a Search button for the songs it couldn't find. Some limits: Spotify only shares the first 100 songs of a playlist, Bandcamp matches only open on Bandcamp (Quantm can't play them), and some SoundCloud copies are only 30-second previews or copy-protected, so those are listed separately instead of being added. Audius and Bandcamp songs get a small tag wherever they show up.
