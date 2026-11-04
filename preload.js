@@ -33,6 +33,13 @@ contextBridge.exposeInMainWorld('native', {
   onNavigate: (fn) => ipcRenderer.on('nav:history', (event, direction) => fn(direction === 'back' ? 'back' : 'forward')),
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),
   copy: (text) => ipcRenderer.invoke('clipboard:write', text),
+  lastfm: {
+    status: () => ipcRenderer.invoke('lastfm:status'),
+    begin: (key, secret) => ipcRenderer.invoke('lastfm:begin', key, secret),
+    finish: () => ipcRenderer.invoke('lastfm:finish'),
+    disconnect: () => ipcRenderer.invoke('lastfm:disconnect'),
+    submit: (method, track) => ipcRenderer.invoke('lastfm:submit', method, track)
+  },
   discord: {
     update: (state) => ipcRenderer.invoke('discord:update', state),
     setEnabled: (on) => ipcRenderer.invoke('discord:setEnabled', on),

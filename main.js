@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const discord = require('./discord');
+const { createLastfm } = require('./lastfm');
 const updates = require('./updater');
 const offline = require('./offline');
 const crashlog = require('./crashlog');
@@ -1041,6 +1042,13 @@ handle('window:control', (event, action) => {
   if (action === 'close') mainWindow.close();
 });
 
+let lastfm;
+handle('lastfm:status', () => lastfm.status());
+handle('lastfm:begin', (event, key, secret) => lastfm.begin(key, secret));
+handle('lastfm:finish', () => lastfm.finish());
+handle('lastfm:disconnect', () => lastfm.disconnect());
+handle('lastfm:submit', (event, method, track) => lastfm.submit(method, track));
+
 // Discord "Listening to Quantm" status
 handle('discord:update', (event, state) => discord.update(state));
 handle('discord:setEnabled', (event, on) => discord.setEnabled(on));
@@ -1132,6 +1140,7 @@ if (!app.requestSingleInstanceLock()) {
     crashlog.sessionStarted();
     registerNotificationIdentity();
     auth = loadAuth();
+    lastfm = createLastfm({ directory: app.getPath('userData'), safeStorage, openExternal: url => shell.openExternal(url) });
     clearStaleDatadome();
     offline.handleScheme();
     createMainWindow();

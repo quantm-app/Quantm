@@ -203,3 +203,9 @@ Bug reports, feature ideas and pull requests are welcome. See [CONTRIBUTING.md](
 ## License
 
 Quantm is free software licensed under the [GNU General Public License v3.0](LICENSE). You can redistribute it and/or modify it under the terms of that license.
+
+### Last.fm scrobbling
+
+In Settings ? Playback, create a Last.fm API account at https://www.last.fm/api/account/create and enter its API key and shared secret. Select **Authorize Last.fm**, approve access in your browser, then select **Finish connecting**. Quantm stores the credentials using the operating system's secure storage; the connection is unavailable if secure storage is not available. Disconnect at any time in the same settings card.
+
+Quantm sends the SoundCloud uploader and track title to Last.fm as artist and track. Tracks longer than 30 seconds are scrobbled after half their duration or four minutes of listening, whichever comes first. Pauses and large seeks do not count as listening. Failed scrobble submissions are retained locally for retry while connected; disconnecting removes the credentials and pending scrobbles.

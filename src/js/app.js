@@ -1,4 +1,5 @@
 // Bootstrap: theme, login, app shell, routes, keyboard shortcuts
+import { initLastfm } from './lastfm.js';
 import * as api from './api.js';
 import { h, clear, debounce, artwork } from './dom.js';
 import { settings } from './store.js';
@@ -206,6 +207,7 @@ function mountShell() {
   initThemeRuntime();
   startAutoMixCss(player); // Auto mix beat / mix progress for themes (data-automix, --beat, --mix)
   setupDiscord();
+  initLastfm(player);
 
   document.addEventListener('routechange', (e) => {
     const section = e.detail.path.split('/')[1];
