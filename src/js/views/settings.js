@@ -867,8 +867,8 @@ async function autoMixTab(cleanups) {
 async function lastfmCard() {
   const state = await window.native.lastfm.status();
   const status = h('p.muted', state.connected ? `Connected as ${state.username}` : 'Not connected');
-  const key = h('input', { type: 'text', placeholder: 'API key', 'aria-label': 'Last.fm API key', autocomplete: 'off' });
-  const secret = h('input', { type: 'password', placeholder: 'Shared secret', 'aria-label': 'Last.fm shared secret', autocomplete: 'off' });
+  const key = h('input.input', { type: 'text', placeholder: 'API key', 'aria-label': 'Last.fm API key', autocomplete: 'off' });
+  const secret = h('input.input', { type: 'password', placeholder: 'Shared secret', 'aria-label': 'Last.fm shared secret', autocomplete: 'off' });
   const connect = button('Authorize Last.fm', async () => {
     try {
       await window.native.lastfm.begin(key.value.trim(), secret.value.trim());
