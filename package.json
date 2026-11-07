@@ -30,6 +30,7 @@
       "import-sources.js",
       "window-snap.js",
       "discord.js",
+      "lastfm.js",
       "src/**/*",
       "build/icon.png",
       "LICENSE"

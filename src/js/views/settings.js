@@ -895,6 +895,34 @@ async function autoMixTab(cleanups) {
   );
 }
 
+async function lastfmCard() {
+  const state = await window.native.lastfm.status();
+  const status = h('p.muted', state.connected ? `Connected as ${state.username}` : 'Not connected');
+  const key = h('input.input', { type: 'text', placeholder: 'API key', 'aria-label': 'Last.fm API key', autocomplete: 'off' });
+  const secret = h('input.input', { type: 'password', placeholder: 'Shared secret', 'aria-label': 'Last.fm shared secret', autocomplete: 'off' });
+  const connect = button('Authorize Last.fm', async () => {
+    try {
+      await window.native.lastfm.begin(key.value.trim(), secret.value.trim());
+      key.value = ''; secret.value = '';
+      status.textContent = 'Approve access in your browser, then select Finish connecting.';
+    } catch (e) { toast(e.message || 'Could not start Last.fm authorization', 'error'); }
+  }, 'btn-outline');
+  const finish = button('Finish connecting', async () => {
+    try {
+      const result = await window.native.lastfm.finish();
+      status.textContent = `Connected as ${result.username}`;
+      toast('Last.fm connected');
+    } catch (e) { toast(e.message || 'Could not connect to Last.fm', 'error'); }
+  }, 'btn-outline');
+  const disconnect = button('Disconnect', async () => {
+    try { await window.native.lastfm.disconnect(); status.textContent = 'Not connected'; toast('Last.fm disconnected'); }
+    catch (e) { toast(e.message || 'Could not disconnect Last.fm', 'error'); }
+  }, 'btn-outline');
+  return card('Last.fm', 'Send your listening activity to Last.fm. Create a Last.fm API account to obtain an API key and shared secret.',
+    status, h('div.settings-actions', key, secret), h('div.settings-actions', connect, finish, disconnect),
+    h('p.muted.small', 'Authorize in your browser, then finish connecting here. Credentials are stored using system encryption.'));
+}
+
 async function playbackTab(cleanups) {
   await offline.init();
   const downloadsSummary = h('p.muted');
@@ -941,6 +969,7 @@ async function playbackTab(cleanups) {
       toggleRow('Normalize volume', 'Even out loud and quiet tracks so every song plays at a similar level.', settings.normalize !== false,
         (on) => player.setNormalize(on))
     ),
+    await lastfmCard(),
     card('Downloads', null, downloadsSummary,
       h('div.settings-actions', button('Open downloads folder', () => offline.openFolder(), 'btn-outline'), removeDownloads),
       h('p.muted.small', "Only tracks whose artist allows downloads can be downloaded. Files are kept in the artist's original format.")
