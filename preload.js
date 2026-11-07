@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('native', {
   discord: {
     update: (state) => ipcRenderer.invoke('discord:update', state),
     setEnabled: (on) => ipcRenderer.invoke('discord:setEnabled', on),
+    setHideWhileGaming: (on) => ipcRenderer.invoke('discord:setHideWhileGaming', on),
     status: () => ipcRenderer.invoke('discord:status')
   },
   metrics: () => ipcRenderer.invoke('app:metrics'),
@@ -64,5 +65,6 @@ contextBridge.exposeInMainWorld('native', {
     onStatus: (fn) => ipcRenderer.on('update:status', (event, state) => fn(state))
   },
   info: () => ipcRenderer.invoke('app:info'),
+  lab: { recipes: () => ipcRenderer.invoke('lab:recipes') },
   openCrashLogs: () => ipcRenderer.invoke('app:openCrashLogs')
 });

@@ -125,7 +125,7 @@ test('the quick cut waits for the next song, and falls back to the usual Auto ch
   assert.equal(p.selectMixStyle(prep, cues.transitionFor(from.id, to.id), null).genre, undefined, 'no outgoing beat to count bars on');
 });
 
-test('explicit styles, pair overrides, and custom mix points all win over genre transitions', t => {
+test('explicit styles, pair overrides, custom mix points and Lab DJ all win over genre transitions', t => {
   const { p, from, to, incoming } = fixture(t);
   const g = grid(90);
   p.audio.currentTime = 150;

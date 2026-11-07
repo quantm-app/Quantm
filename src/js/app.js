@@ -11,7 +11,9 @@ import { initAppearance } from './appearance.js';
 import { initThemeRuntime } from './theme-runtime.js';
 import { startAutoMixCss } from './automix-css.js';
 import { initPerformance } from './performance.js';
+import { initTransitionTab } from './transition-tab.js';
 import { initUpdates } from './updates.js';
+import * as lab from './lab.js';
 import { initStats } from './stats.js';
 import { route, startRouter } from './router.js';
 import { mountPlayerBar } from './playerbar.js';
@@ -53,6 +55,7 @@ route('/settings/:tab?', views.settings);
 const app = document.getElementById('app');
 
 async function boot() {
+  lab.reload(); // Lab DJ recipes (bundled with the app)
   const { loggedIn } = await window.native.auth.status();
   if (!loggedIn) return showLogin();
   try {
@@ -204,6 +207,7 @@ function mountShell() {
   initPerformance();
   player.restoreSession();
   initThemeRuntime();
+  initTransitionTab(player); // the small tab that shows the fades during a transition
   startAutoMixCss(player); // Auto mix beat / mix progress for themes (data-automix, --beat, --mix)
   setupDiscord();
 
@@ -292,12 +296,14 @@ function setupDiscord() {
     } : { showIdle });
   };
   window.native.discord.setEnabled(settings.discordStatus !== false);
+  window.native.discord.setHideWhileGaming(settings.discordHideWhileGaming !== false);
   player.on('state', push);
   player.on('track', push);
   player.on('timeline', push); // seeks and duration changes on the active deck
   player.on('speed', push);
   store.on('settings', (s) => {
     window.native.discord.setEnabled(s.discordStatus !== false);
+    window.native.discord.setHideWhileGaming(s.discordHideWhileGaming !== false);
     push();
   });
   push(); // the idle status shows as soon as Quantm opens

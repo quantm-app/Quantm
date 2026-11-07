@@ -13,7 +13,8 @@ import { packFor } from '../theme-packs.js';
 import * as mixmemory from '../mixmemory.js';
 import * as mixlearn from '../mixlearn.js';
 import * as mixpairs from '../mixpairs.js';
-import { GENRE_LABELS } from '../transitions.js';
+import * as lab from '../lab.js';
+import { styleName } from '../transitions.js';
 import * as look from '../appearance.js';
 import { pageHeader, button, toast, avatar, confirmDialog, promptDialog, removeAllDownloads } from '../ui.js';
 import { subscribeUpdates, performUpdate, updateStatusText } from '../updates.js';
@@ -723,8 +724,36 @@ function autoMixLearning() {
 // Auto mix tab: what it's doing right now and what it has learned, live
 // ---------------------------------------------------------------------------
 
-/** Name of the style a mix or plan uses, for the live rows */
-const styleName = (style, genre) => GENRE_LABELS[genre] || (style === 'dropcut' ? 'Drop cut' : 'Smooth blend');
+/** Lab DJ: the recipes measured from DJ sets, and what the thumbs say about them */
+function labCard() {
+  const summary = h('p.settings-row-desc');
+  const table = h('div');
+  const show = () => {
+    const data = lab.recipes();
+    if (!data) {
+      summary.textContent = 'The recipes could not be loaded, so Lab DJ plays Smooth blends.';
+      table.replaceChildren();
+      return;
+    }
+    summary.textContent = `${data.recipes.length} recipe${data.recipes.length === 1 ? '' : 's'}. Your thumbs up and down on a Lab DJ transition move its recipe up or down.`;
+    table.replaceChildren(h('table.automix-table',
+      h('thead', h('tr', ['Genre', 'Tempo', 'Recipe', 'What it does', 'DJ transitions', 'Thumbs up / down'].map(t => h('th', t)))),
+      h('tbody', lab.topRecipes(data).map(({ family, tempo, recipe, good, bad }) =>
+        h('tr', h('td', mixlearn.FAMILY_LABELS[family] || 'Unknown'), h('td', mixlearn.TEMPO_LABELS[tempo]), h('td', recipe.id),
+          h('td', lab.describe(recipe)), h('td', String(recipe.count)), h('td', `${good} / ${bad}`))))));
+  };
+  show();
+  const reset = button('Reset Lab scores', async () => {
+    const ok = await confirmDialog('Reset Lab scores?', 'Every recipe goes back to no thumbs up or down.', 'Reset');
+    if (!ok) return;
+    lab.resetScores();
+    show();
+    toast('Lab scores reset');
+  }, 'btn-outline');
+  return card('Lab DJ', 'Transitions based on patterns measured from real DJ sets, picked by the outgoing song’s genre and tempo. Pick a Lab DJ style under Transition style to use it. The thumbs you give a Lab DJ transition teach it which recipes work.',
+    h('div.settings-row', h('span.settings-row-text', h('span.settings-row-title', 'Recipes'), summary), h('div.settings-actions', reset)),
+    table);
+}
 
 /** How the next song's key relates to the playing one's, for the up-next line (the codes are Camelot wheel keys) */
 const KEY_RELATIONS = {
@@ -771,7 +800,7 @@ async function autoMixTab(cleanups) {
       if (m?.drop) parts.push(`drop at ${clock(m.drop.time)}, confidence ${pct(m.drop.confidence)}`);
       rows.push(row('Memory', parts.length ? parts.join('  ·  ') + (m ? '' : '  (guessed from the waveform)') : 'first time hearing this song'));
       if (s.plan && !s.mix) {
-        if (s.plan.reason) rows.push(row('Transition style', `${styleName(s.plan.style, s.plan.genre)} · ${s.plan.reason}`));
+        if (s.plan.reason) rows.push(row('Transition style', `${styleName(s.plan.style, s.plan.lab?.recipe.id, s.plan.genre)} · ${s.plan.reason}`));
         const p = s.plan.choice ? s.plan.choice.params : null;
         const when = s.mixIn != null ? (s.mixIn > 0 ? 'in ' + clock(s.mixIn) : 'starting now') : 'near the end';
         rows.push(row('Next mix', `${when}  ·  ${(s.plan.span / (player.audio.playbackRate || 1)).toFixed(1)} s` +
@@ -796,7 +825,7 @@ async function autoMixTab(cleanups) {
           (p.startAt > 0 ? `, starts at ${clock(p.startAt)}` : '')));
       }
       if (s.mix) {
-        rows.push(row('Transition style', `${styleName(s.mix.style, s.mix.genre)}${s.mix.phase ? ' · ' + s.mix.phase : ''}${s.mix.reason ? ' · ' + s.mix.reason : ''}`));
+        rows.push(row('Transition style', `${styleName(s.mix.style, s.mix.lab, s.mix.genre)}${s.mix.phase ? ' · ' + s.mix.phase : ''}${s.mix.reason ? ' · ' + s.mix.reason : ''}`));
         const bar = h('span.automix-bar', h('span', { style: { width: pct(s.mix.progress) } }));
         rows.push(row('Mixing', h('span', `${s.mix.from.title} → ${s.mix.to.title}  ·  ${pct(s.mix.progress)} of ${s.mix.seconds.toFixed(1)} s` +
           (s.mix.bass ? (s.mix.progress < 0.5 ? '  ·  bass swaps at 50%' : '  ·  bass swapped') : ''), bar)));
@@ -856,10 +885,12 @@ async function autoMixTab(cleanups) {
     card('Auto mix', 'DJ-style transitions that learn from every song and every rating. Updates live while you listen.',
       toggleRow('Auto mix', 'Beat-matched mixes between songs. Also in Playback → Crossfade.', settings.autoMix === true, (on) => saveSettings({ autoMix: on })),
       selectRow('Transition style', 'Smooth blend mixes over the end of each song. Drop cut skips to the next song’s drop. Auto picks what suits the music: a quick cut for hip-hop, a double drop for drum and bass or dubstep, a slow filter fade for deep house and ambient, and a drop cut for energetic electronic pairs with a clear drop.',
-        [{ id: 'blend', label: 'Smooth blend (default)' }, { id: 'auto', label: 'Auto' }, { id: 'dropcut', label: 'Drop cut' }],
+        [{ id: 'blend', label: 'Smooth blend (default)' }, { id: 'auto', label: 'Auto' }, { id: 'dropcut', label: 'Drop cut' },
+          { id: 'lab-blend', label: 'Lab DJ: Smooth blend' }, { id: 'lab-dropcut', label: 'Lab DJ: Drop cut' }, { id: 'lab', label: 'Lab DJ: Everything' }],
         settings.transitionStyle || 'blend', value => saveSettings({ transitionStyle: value, transitionStyleChosen: true })),
       now),
     card('What it has learned', 'Slowly, per genre and tempo range: what it tries next starts from these. A genre starts from the any-genre values for its tempo.', learned, autoMixLearning()),
+    labCard(),
     card('Activity', null, feed)
   );
 }
@@ -903,6 +934,8 @@ async function playbackTab(cleanups) {
         (on) => saveSettings({ discordStatus: on })),
       toggleRow('Discord status while not playing', 'Keep "Playing Quantm" on your profile while Quantm is open: Browsing, or Paused with the song.', settings.discordIdle !== false,
         (on) => saveSettings({ discordIdle: on })),
+      toggleRow('Hide Discord status while gaming', 'Let Discord show your game instead of Quantm. Quantm steps aside while another app is fullscreen and comes back about a minute after you leave it.', settings.discordHideWhileGaming !== false,
+        (on) => saveSettings({ discordHideWhileGaming: on })),
       toggleRow('Resume where you left off', 'Reopen the last song, queue and position (paused) when Quantm starts.', settings.resumeSession !== false,
         (on) => saveSettings({ resumeSession: on })),
       toggleRow('Normalize volume', 'Even out loud and quiet tracks so every song plays at a similar level.', settings.normalize !== false,
@@ -920,6 +953,8 @@ async function playbackTab(cleanups) {
         (v) => saveSettings({ crossfade: v })),
       toggleRow('Auto mix', 'Mix songs into each other like a DJ: the beats line up, the tempo follows and the bass swaps halfway. Picks its own length; songs without a clear beat get a normal blend.',
         settings.autoMix === true, (on) => saveSettings({ autoMix: on })),
+      toggleRow('Show transition graph', 'A small tab drops in during a transition and shows the fades.',
+        settings.transitionTab !== false, (on) => saveSettings({ transitionTab: on })),
       autoMixLearning(),
       h('p.muted.small', 'Custom transitions: press I and O while a song plays to set where it mixes in and out, or edit a transition from the queue. They work even with crossfade off, and Auto mix beat-matches them too.')
     ),

@@ -4,15 +4,8 @@ import { h } from '../dom.js';
 import { player } from '../player.js';
 import { pageHeader, trackList, button } from '../ui.js';
 
-const GENRES = [
-  'Alternative Rock', 'Ambient', 'Classical', 'Country', 'Dance & EDM', 'Dancehall', 'Deep House', 'Disco',
-  'Drum & Bass', 'Dubstep', 'Electronic', 'Folk & Singer-Songwriter', 'Hip-hop & Rap', 'House', 'Indie',
-  'Jazz & Blues', 'Latin', 'Metal', 'Piano', 'Pop', 'R&B & Soul', 'Reggae', 'Reggaeton', 'Rock',
-  'Soundtrack', 'Techno', 'Trance', 'Trap', 'Triphop', 'World'
-];
-
-/** "Hip-hop & Rap" -> "hip-hop-and-rap" */
-const slugOf = (title) => title.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const slugOf = api.genreSlug;
+const GENRES = api.GENRES;
 
 export async function render(page, params) {
   const genre = params.genre ? GENRES.find(g => slugOf(g) === slugOf(params.genre)) : null;

@@ -22,6 +22,14 @@ let lastActivity = null;   // re-sent after (re)connecting
 let retryTimer = null;
 let disconnectTimer = null; // the delayed close after turning it off
 
+// Gaming: while another app is fullscreen Quantm steps aside so Discord shows the game
+const GAMING_GRACE_MS = 60000; // alt-tabbing out of a game briefly drops fullscreen: wait before coming back
+let hideWhileGaming = true;    // the discordHideWhileGaming setting
+let gamingNow = false;         // fullscreen right now
+let gamingGrace = false;       // fullscreen ended less than GAMING_GRACE_MS ago
+let graceTimer = null;
+let shown = false;             // an activity is currently set on Discord
+
 function pipePath(i) {
   if (process.platform === 'win32') return `\\\\?\\pipe\\discord-ipc-${i}`;
   const dir = process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || process.env.TMP || process.env.TEMP || os.tmpdir();
@@ -71,7 +79,8 @@ function connect(i = 0) {
         buffer = buffer.slice(8 + length);
         if (op === OP_FRAME && message && message.evt === 'READY') {
           ready = true;
-          if (lastActivity !== undefined) setActivity(lastActivity);
+          shown = false;
+          if (lastActivity !== undefined) apply();
         }
         if (op === OP_CLOSE) disconnect();
       }
@@ -97,14 +106,35 @@ function scheduleRetry() {
   retryTimer = setTimeout(() => { retryTimer = null; connect(); }, 30000);
 }
 
-function setActivity(activity) {
-  lastActivity = activity;
+function gaming() {
+  return gamingNow || gamingGrace;
+}
+
+/** What should be on Discord right now: lastActivity, minus whatever the game should not compete with */
+function visibleActivity() {
+  const activity = lastActivity;
+  if (!gaming()) return activity;
+  if (hideWhileGaming) return null;
+  // never the idle "Playing Quantm" (type 0) while gaming: it fights the game's own status
+  return activity && activity.type === 0 ? null : activity;
+}
+
+/** Send what should be showing. While gaming, nothing is sent unless there is something to take down. */
+function apply() {
   if (!ready) { connect(); return; }
+  const activity = visibleActivity();
+  if (gaming() && !activity && !shown) return;
+  shown = !!activity;
   send(OP_FRAME, {
     cmd: 'SET_ACTIVITY',
     args: { pid: process.pid, activity: activity || undefined },
     nonce: String(Date.now()) + Math.random().toString(16).slice(2)
   });
+}
+
+function setActivity(activity) {
+  lastActivity = activity;
+  apply();
 }
 
 const clip = (text, max = 128) => {
@@ -179,6 +209,7 @@ function setEnabled(on) {
   if (!enabled) {
     if (ready) send(OP_FRAME, { cmd: 'SET_ACTIVITY', args: { pid: process.pid }, nonce: String(Date.now()) });
     lastActivity = null;
+    shown = false;
     clearTimeout(retryTimer);
     retryTimer = null;
     clearTimeout(disconnectTimer);
@@ -191,8 +222,43 @@ function setEnabled(on) {
   }
 }
 
-function status() {
-  return { configured: configured(), connected: ready, enabled };
+/**
+ * Another app went fullscreen (on) or stopped being fullscreen (off), from the main process's check.
+ * On is immediate; off waits GAMING_GRACE_MS so alt-tabbing out of a game doesn't flicker the status.
+ */
+function setGaming(on) {
+  on = !!on;
+  if (on) {
+    clearTimeout(graceTimer);
+    graceTimer = null;
+    gamingGrace = false;
+    if (gamingNow) return;
+    gamingNow = true;
+    if (enabled) apply();
+    return;
+  }
+  if (!gamingNow) return;
+  gamingNow = false;
+  gamingGrace = true;
+  clearTimeout(graceTimer);
+  graceTimer = setTimeout(() => {
+    graceTimer = null;
+    gamingGrace = false;
+    if (enabled) apply();
+  }, GAMING_GRACE_MS);
+  if (graceTimer && graceTimer.unref) graceTimer.unref();
 }
 
-module.exports = { update, setEnabled, status, connect };
+/** The "hide while gaming" setting. Off still keeps the idle status away, but a playing song may show. */
+function setHideWhileGaming(on) {
+  on = on !== false;
+  if (on === hideWhileGaming) return;
+  hideWhileGaming = on;
+  if (enabled && gaming() && lastActivity !== undefined) apply();
+}
+
+function status() {
+  return { configured: configured(), connected: ready, enabled, gaming: gaming(), hideWhileGaming };
+}
+
+module.exports = { update, setEnabled, setGaming, setHideWhileGaming, status, connect };

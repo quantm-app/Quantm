@@ -52,7 +52,7 @@ export function futureWindow(grid, duration, { now = 0, rate = 1, dropTime, rati
     buildWindow(grid, end + beat, { out, outroStart });
   const firstCut = preferred?.cut ?? origin + Math.floor((end - origin) / (32 * beat)) * 32 * beat;
   const preferredLength = preferred ? preferred.cut - preferred.build : 32 * beat;
-  // the quick cut asks for a build of exactly this many beats; otherwise prefer eight bars, then four or two
+  // Lab DJ asks for a build of exactly this many beats; otherwise prefer eight bars, then four or two
   const lengths = buildBeats ? [buildBeats * beat] : [...new Set([preferredLength, ...[32, 16, 8].map(n => n * beat)])]
     .filter(length => length >= 8 * beat - 1e-8 && length <= Math.min(32 * beat, preferredLength) + 1e-8);
   for (const length of lengths) {
@@ -71,9 +71,10 @@ export function futureWindow(grid, duration, { now = 0, rate = 1, dropTime, rati
 
 /**
  * Accelerating 1, 1/2, 1/4 and 1/8 beat slices, then a 1/4-beat breath.
- * options (the quick cut; none = the Drop cut): breath (seconds of silence before the drop),
+ * options (Lab DJ recipes; none = the Drop cut): breath (seconds of silence before the drop),
  * stutter: false (no loop roll), echo: false (no echo), minBeats (shortest build, default 8),
- * kill: { style: 'none' } for no high-pass sweep (the default sweeps to 2400 Hz).
+ * kill: { style: 'sweep', hz } | { style: 'step', steps: [{ bar, hz }] } | { style: 'none' }
+ * for the high-pass (bar -2 is two bars before the drop; default sweep to 2400 Hz).
  */
 export function rollSchedule(start, beat, beats = 32, variant = 'roll', options = {}) {
   const { breath = beat / 4, minBeats = 8, kill = null } = options;
@@ -94,8 +95,23 @@ export function rollSchedule(start, beat, beats = 32, variant = 'roll', options 
   });
   const schedule = { start, beat, drop, cut, roll: stages[0]?.at ?? drop - 4 * beat, stages, end: drop + beat * 2, variant };
   if (options.echo === false) schedule.echo = false;
-  if (kill?.style === 'none') schedule.kill = { style: 'none' };
+  if (kill) {
+    schedule.kill = kill.style === 'step' ? { style: 'step', steps: (kill.steps || [])
+      .map(s => ({ at: Math.max(start, drop + s.bar * 4 * beat), hz: s.hz })).sort((a, b) => a.at - b.at) } :
+      kill.style === 'sweep' ? { style: 'sweep', hz: kill.hz } : { style: 'none' };
+  }
   return schedule;
+}
+
+/** The high-pass cutoff (Hz) a schedule asks for at audio time t: what DropCutEffect programs, for tests and the settings monitor */
+export function highpassAt(schedule, t) {
+  if (t < schedule.start) return 0;
+  const kill = schedule.kill;
+  if (kill?.style === 'none') return 25;
+  if (kill?.style === 'step') return kill.steps.filter(s => s.at <= t + 1e-9).at(-1)?.hz ?? 25;
+  const to = kill?.hz ?? 2400;
+  const progress = Math.min(1, (t - schedule.start) / (schedule.cut - schedule.start));
+  return 25 * Math.pow(to / 25, progress);
 }
 
 export function dropPhase(schedule, now) {
@@ -125,7 +141,9 @@ export class DropCutEffect {
       highpass.Q.value = 1.2;
       highpass.frequency.value = 0;
       highpass.frequency.setValueAtTime(25, schedule.start);
-      if (schedule.kill?.style !== 'none') highpass.frequency.exponentialRampToValueAtTime(2400, schedule.cut);
+      const kill = schedule.kill;
+      if (kill?.style === 'step') for (const step of kill.steps) highpass.frequency.setValueAtTime(step.hz, step.at);
+      else if (kill?.style !== 'none') highpass.frequency.exponentialRampToValueAtTime(kill?.hz ?? 2400, schedule.cut);
       this.input.connect(dry).connect(highpass).connect(destination);
       const dryEnd = schedule.variant === 'echo' ? schedule.cut : schedule.roll;
       dry.gain.setValueAtTime(1, dryEnd - 0.002);
@@ -140,7 +158,7 @@ export class DropCutEffect {
       echoFilter.frequency.value = 700;
       echo.connect(echoFilter).connect(feedback).connect(echo);
       echo.connect(wet).connect(highpass);
-      const echoLevel = schedule.echo === false ? 0 : 1; // a cut without an echo
+      const echoLevel = schedule.echo === false ? 0 : 1; // Lab DJ recipes without an echo
       gate(wet.gain, schedule.roll, schedule.end, 0.3 * echoLevel);
       if (schedule.variant === 'echo') {
         const send = gain(0);

@@ -72,7 +72,7 @@ test('the three bands of a blend: incoming highs come in early, mids hand over n
   assert.deepEqual(eqLevels(true, 0.2, 0), { mid: 0, high: 0 });
   assert.deepEqual(eqLevels(false, 0.9, undefined), { mid: 0, high: 0 });
   assert.deepEqual(eqLevels(true, 0.2, true), eqLevels(true, 0.2, 1));
-  // a handover centre (the double drop's) moves the mids with it
+  // a Lab DJ handover centre moves the mids with it
   assert.ok(eqLevels(true, 0.3, 1, 0.25).mid > eqLevels(true, 0.3, 1, 0.5).mid + 4);
 });
 
@@ -103,7 +103,7 @@ test('a blend programs mid and high curves beside the untouched bass swap, on th
   assert.equal(into.high.gain.events.at(-1).v, 0);
 });
 
-test('a blend resumed part way carries on from where it was; a handover centre shapes the mids', async t => {
+test('a blend resumed part way carries on from where it was; a Lab handover centre shapes the mids', async t => {
   const { norm, b, into, eqLevels } = await setup(t);
   norm.swapBass(b, true, 10, 0.5, 0.2, { eq: 1 });
   const curve = lastCurve(into.mid.gain);

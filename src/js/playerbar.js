@@ -5,11 +5,11 @@ import { player } from './player.js';
 import { createVisualizer } from './visualizer.js';
 import { store, settings, saveSettings } from './store.js';
 import { getSleepTimer, formatRemaining } from './sleep.js';
-import { iconButton, likeButton, repostButton, avatar, addToPlaylistDialog, trackMenu, link, userHref, trackHref, sourceBadge, emptyState, menu, transitionDialog, toast } from './ui.js';
+import { iconButton, likeButton, repostButton, avatar, addToPlaylistDialog, trackMenu, link, userHref, trackHref, sourceBadge, menu, toast } from './ui.js';
 import { isExternal, isExternalId } from './sources.js';
-import { getCues, cueEvents, transitionFor } from './cues.js';
-import { formatCueTime } from './cue-time.js';
+import { getCues, cueEvents } from './cues.js';
 import { createMixRate } from './mixrate.js';
+import { createQueuePanel } from './queue-panel.js';
 
 export function mountPlayerBar(root, { offline = false } = {}) {
   // the placeholder icon only shows in the side panel, when the track has no cover
@@ -492,80 +492,15 @@ export function mountPlayerBar(root, { offline = false } = {}) {
     const open = force !== undefined ? force : !panel.classList.contains('open');
     panel.classList.toggle('open', open);
     queueBtn.classList.toggle('active', open);
-    if (open) renderQueue();
+    if (open) queuePanel.build();
   }
 
-  function renderQueue() {
-    if (!panel.classList.contains('open')) return;
-    clear(panel);
-    panel.append(h('div.queue-head',
-      h('h2', 'Queue'),
-      h('div.queue-head-actions',
-        h('button.btn.btn-ghost.btn-sm', { onclick: () => player.clearQueue() }, 'Clear'),
-        iconButton('close', 'Close', () => toggleQueue(false))
-      )
-    ));
-    if (!player.queue.length) {
-      panel.append(emptyState('Your queue is empty. Play something!', 'queue'));
-      return;
-    }
-    if (player.context) panel.append(h('div.queue-context.muted.small', 'Playing from ', h('a', { href: player.context.href }, player.context.label)));
-
-    const list = h('div.queue-list');
-    player.queue.forEach((track, i) => {
-      if (i < player.index - 3) return; // keep a little history visible
-      const row = h('div.queue-row' + (i === player.index ? '.current' : '') + (i < player.index ? '.past' : ''),
-        { draggable: true, dataset: { index: i }, tabindex: '0', role: 'button', 'aria-label': `Play ${track.title}` },
-        h('div.queue-art', { style: { backgroundImage: coverOf(track, 't67x67') ? `url("${coverOf(track, 't67x67')}")` : '' } }),
-        h('div.queue-meta', h('div.queue-title', track.title), h('div.muted.small', track.user ? track.user.username : '')),
-        h('span.muted.small', duration(track.duration)),
-        i !== player.index ? iconButton('close', 'Remove', () => player.removeFromQueue(i), 'queue-remove') : null
-      );
-      row.addEventListener('dblclick', () => player.jump(i));
-      // Enter / Space on the row itself (not on its Remove button) plays it, like a double-click
-      row.addEventListener('keydown', (e) => {
-        if (e.target !== row || (e.key !== 'Enter' && e.key !== ' ')) return;
-        e.preventDefault();
-        e.stopPropagation(); // Space would also pause through the global shortcut
-        player.jump(i);
-      });
-      row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-quantm-queue', String(i)); row.classList.add('dragging'); });
-      row.addEventListener('dragend', () => row.classList.remove('dragging'));
-      row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('drop'); });
-      row.addEventListener('dragleave', () => row.classList.remove('drop'));
-      row.addEventListener('drop', (e) => {
-        e.preventDefault();
-        // only a row dragged from this list counts (a file dropped from outside carries no index)
-        const raw = e.dataTransfer.getData('application/x-quantm-queue');
-        const from = raw === '' ? NaN : Number(raw);
-        if (!isNaN(from) && from !== i) player.moveInQueue(from, i);
-      });
-      if (i === player.index) list.append(h('div.queue-label', 'Now playing'));
-      if (i === player.index + 1) list.append(h('div.queue-label', 'Next up'));
-      list.append(row);
-      const next = player.queue[i + 1];
-      if (next) {
-        const transition = transitionFor(track.id, next.id, player.crossfadeSeconds());
-        // in mix order, say how this song blends into the next
-        const blend = player.blendNote(i);
-        const label = (transition.custom
-          ? `↘ ${transition.out == null ? 'end' : formatCueTime(transition.out)} → ${formatCueTime(transition.in)} · ${transition.fade}s`
-          : 'Transition') + (blend ? ` · ${blend.text}` : '');
-        list.append(h('button.queue-transition' + (transition.custom ? '.custom' : '') + (blend && blend.ok === true ? '.blend-ok' : blend && blend.ok === false ? '.blend-warn' : ''), {
-          title: `Edit transition: ${track.title} → ${next.title}`,
-          onclick: () => transitionDialog(track, next)
-        }, label));
-      }
-    });
-    panel.append(list);
-    const currentRow = list.querySelector('.current');
-    if (currentRow) currentRow.scrollIntoView({ block: 'nearest' });
-  }
-
-  player.on('queue', renderQueue);
-  player.on('track', renderQueue);
-  cueEvents.on('change', renderQueue);
-  store.on('settings', renderQueue);
+  const queuePanel = createQueuePanel(panel, { player, close: () => toggleQueue(false) });
+  // handoff only moves the current song, which re-marks the rows instead of rebuilding them (queue-panel.js)
+  player.on('queue', queuePanel.refresh);
+  player.on('track', queuePanel.refresh);
+  cueEvents.on('change', queuePanel.rebuild);
+  store.on('settings', queuePanel.rebuild);
 
   syncDock(); // in case the appearance was applied before the bar was built
   return { toggleQueue };

@@ -160,12 +160,14 @@ test('mixmemory remembers a heard key compactly, refines it on later plays and s
   assert.equal(mixmemory.get('song').key.tonic, 9);
   // entries written before key detection load, and learn fine
   localStorage.setItem('quantm.mixmemory', JSON.stringify({ old: { bpm: 120, period: 0.5, offset: 0.1, confidence: 0.8, plays: 2, updated: 5 } }));
+  mixmemory.invalidate();
   assert.equal(mixmemory.get('old').key, null);
   assert.equal(mixmemory.get('old').plays, 2);
   mixmemory.learn('old', { grid, key: heard(C_SHARP_MAJOR) });
   assert.equal(mixmemory.get('old').key.mode, 'major');
   // junk keys are ignored rather than trusted
   localStorage.setItem('quantm.mixmemory', JSON.stringify({ bad: { plays: 1, updated: 1, key: { tonic: 14, mode: 'dorian', chroma: [1] } } }));
+  mixmemory.invalidate();
   assert.equal(mixmemory.get('bad').key, null);
   assert.equal(mixmemory.keyEstimate(null), null);
   mixmemory.reset();

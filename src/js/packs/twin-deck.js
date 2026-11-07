@@ -187,13 +187,14 @@ function renderConsole(container, ctx) {
     consoleNode.dataset.playing = String(playing);
     consoleNode.dataset.auto = on ? 'on' : 'off';
     consoleNode.dataset.mixing = String(!!mix);
-    // a drop cut swaps decks on the drop instead of blending, and needs no beat lock
+    // a drop cut swaps decks on the drop instead of blending, and needs no beat lock; Lab DJ names its recipe
     const style = mix ? snapshot.mix?.style || mix.style || 'blend' : 'none';
     const dropCut = style === 'dropcut';
     const phase = dropCut ? snapshot.mix?.phase || 'build' : '';
+    const recipe = mix ? snapshot.mix?.lab || null : null;
     consoleNode.dataset.style = style;
     const genre = mix ? snapshot.mix?.genre || null : null;
-    const mixLabel = dropCut ? `${genre === 'quickcut' ? 'QUICK CUT' : 'DROP CUT'} · ${PHASES[phase] || 'BUILD'}` : GENRES[genre] || 'SMOOTH BLEND';
+    const mixLabel = `${recipe ? 'LAB DJ · ' : ''}${dropCut ? `${genre === 'quickcut' ? 'QUICK CUT' : 'DROP CUT'} · ${PHASES[phase] || 'BUILD'}` : GENRES[genre] || 'SMOOTH BLEND'}`;
     status.textContent = !on ? 'AUTO MIX OFF' : !playing ? 'PAUSED' : mix ? mixLabel : 'AUTO MIX ON';
     const next = on ? mix?.to || snapshot.upNext?.track || player.queue?.[player.index + 1] : null;
     const gridA = mix ? player.lock?.match?.gridOut || player.mixPlan?.grid :
@@ -209,7 +210,7 @@ function renderConsole(container, ctx) {
     lockText.textContent = !on ? 'Standby' : !mix ? 'Awaiting mix' : dropCut ? 'No lock needed' : locked ? 'Locked' : 'Drifting';
     const offset = mix && Number.isFinite(snapshot.lock?.errorMs) ?
       `${Math.abs(snapshot.lock.errorMs).toFixed(1)} ms offset` : mix ? 'Finding the beat' : 'No active mix';
-    error.textContent = dropCut ? 'Cuts on the drop' : offset;
+    error.textContent = dropCut ? (recipe ? `Recipe ${recipe}` : 'Cuts on the drop') : recipe ? `${offset} · ${recipe}` : offset;
     consoleNode.style.setProperty('--td-phase-error', `${Math.max(-50, Math.min(50, snapshot.lock?.errorMs || 0))}deg`);
     // drop cut: the crossfader holds on A through the build and snaps to B at the cut; the low EQ on A
     // turns down with the bass sweep and B's comes up on the drop (empty values hand back to the CSS)

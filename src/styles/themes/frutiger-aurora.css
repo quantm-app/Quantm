@@ -1,0 +1,251 @@
+/* Frutiger Aurora: the night-sky branch of the Aero look, like a late-2000s login wallpaper.
+   A navy-to-teal sky with slowly drifting aurora curtains, faint stars and bokeh, and glossy translucent glass.
+   Active when <html data-style="frutiger-aurora">. Pure CSS gradients: no images, fonts or logos.
+   Colors still come from the theme variables; the aurora hues below are only for detail. */
+
+html[data-style="frutiger-aurora"] {
+  --font: "Segoe UI", "Frutiger", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-display: var(--font);
+  --au-green: 20, 215, 140;
+  --au-cyan: 20, 175, 235;
+  --au-blue: 55, 105, 255;
+  --au-violet: 140, 75, 255;
+  --au-edge: rgba(255, 255, 255, .26);
+  --border: rgba(255, 255, 255, .16);
+  --hover: rgba(255, 255, 255, .09);
+  --hover-strong: rgba(255, 255, 255, .16);
+  --surface-2: color-mix(in srgb, var(--surface) 80%, #ffffff);
+  --accent-soft: color-mix(in srgb, var(--accent) 20%, transparent);
+  --shadow: 0 14px 40px rgba(0, 4, 14, .5);
+  --glass-blur: blur(16px) saturate(1.5);
+  --glass-fill: color-mix(in srgb, var(--surface) 68%, transparent);
+  --glass-bar-fill: color-mix(in srgb, var(--bar) 72%, transparent);
+  --panel-fill: color-mix(in srgb, var(--surface) 86%, transparent);
+  --glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, 0) 110px);
+  --glass-hi: inset 0 1px 0 rgba(255, 255, 255, .42), inset 0 0 0 1px rgba(255, 255, 255, .05);
+  --gel: linear-gradient(180deg, rgba(255, 255, 255, .17) 0 49%, rgba(255, 255, 255, .02) 50% 100%);
+  --gel-hot: linear-gradient(180deg, rgba(255, 255, 255, .62) 0 49%, rgba(255, 255, 255, .06) 50% 100%);
+}
+
+/* ---------------------------------------------------------------- the sky: stars + gradient, curtains and ribbons on top */
+
+html[data-style="frutiger-aurora"] body {
+  background:
+    radial-gradient(1.3px 1.3px at 24px 36px, rgba(255, 255, 255, .85), transparent 70%) 0 0 / 190px 170px,
+    radial-gradient(1px 1px at 90px 120px, rgba(214, 240, 255, .7), transparent 70%) 40px 20px / 260px 230px,
+    radial-gradient(1.6px 1.6px at 60px 70px, rgba(255, 255, 255, .6), transparent 70%) 110px 90px / 340px 290px,
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 62%, #000000) 0%, var(--bg) 48%, color-mix(in srgb, var(--bg) 70%, #0c7a70) 100%);
+  background-attachment: fixed;
+}
+html[data-style="frutiger-aurora"] #app { position: relative; z-index: 1; }
+html[data-style="frutiger-aurora"] #view { background: rgba(2, 10, 24, .36); }
+html[data-style="frutiger-aurora"] body::before,
+html[data-style="frutiger-aurora"] body::after { content: ""; position: fixed; pointer-events: none; z-index: 0; will-change: transform; }
+/* curtains: tall soft rays fading out at the top and bottom, plus two glows behind them */
+html[data-style="frutiger-aurora"] body::before {
+  inset: -10% -12% 30% -12%;
+  background:
+    repeating-linear-gradient(96deg, rgba(var(--au-green), 0) 0 30px, rgba(var(--au-green), .22) 50px, rgba(var(--au-cyan), .12) 66px, rgba(var(--au-green), 0) 92px),
+    radial-gradient(ellipse 66% 30% at 28% 30%, rgba(var(--au-green), .54), transparent 74%),
+    radial-gradient(ellipse 58% 26% at 70% 24%, rgba(var(--au-cyan), .42), transparent 74%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 18%, #000 52%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 18%, #000 52%, transparent 100%);
+  animation: fa-drift-a 80s ease-in-out infinite alternate;
+}
+/* ribbons in blue and violet, with bokeh dots drifting the other way */
+html[data-style="frutiger-aurora"] body::after {
+  inset: -8% -10%;
+  background:
+    radial-gradient(ellipse 46% 14% at 78% 34%, rgba(var(--au-violet), .44), transparent 76%),
+    radial-gradient(ellipse 50% 12% at 40% 20%, rgba(var(--au-blue), .44), transparent 76%),
+    linear-gradient(112deg, transparent 14%, rgba(var(--au-blue), .18) 36%, rgba(var(--au-green), .18) 52%, transparent 72%),
+    radial-gradient(circle 34px at 12% 78%, rgba(150, 255, 235, .14), transparent 72%),
+    radial-gradient(circle 52px at 36% 90%, rgba(150, 220, 255, .12), transparent 72%),
+    radial-gradient(circle 24px at 58% 70%, rgba(190, 255, 240, .16), transparent 72%),
+    radial-gradient(circle 44px at 82% 84%, rgba(170, 200, 255, .13), transparent 72%),
+    radial-gradient(circle 18px at 92% 62%, rgba(200, 255, 245, .16), transparent 72%),
+    radial-gradient(circle 30px at 5% 48%, rgba(160, 235, 255, .1), transparent 72%);
+  animation: fa-drift-b 110s ease-in-out infinite alternate;
+}
+@keyframes fa-drift-a {
+  from { transform: translate3d(-3%, 1%, 0) scale(1.02) skewX(-2deg); }
+  to   { transform: translate3d(4%, -2%, 0) scale(1.1) skewX(3deg); }
+}
+@keyframes fa-drift-b {
+  from { transform: translate3d(3%, 0, 0) scale(1.06); }
+  to   { transform: translate3d(-4%, 2%, 0) scale(1); }
+}
+html[data-style="frutiger-aurora"] :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- headings */
+
+html[data-style="frutiger-aurora"] :is(.page-title, .shelf-title, .section-title, .hero-title, .settings-card-title, .queue-head h2) {
+  font-family: var(--font-display); font-weight: 400; letter-spacing: -.02em; color: var(--text); text-shadow: 0 1px 10px rgba(0, 20, 40, .55);
+}
+html[data-style="frutiger-aurora"] :is(.page-header, .shelf-head) { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+html[data-style="frutiger-aurora"] .hero-eyebrow { color: var(--accent); letter-spacing: .14em; font-weight: 700; }
+
+/* ---------------------------------------------------------------- bars and nav: glass strips with a lit top edge */
+
+html[data-style="frutiger-aurora"] .topbar,
+html[data-style="frutiger-aurora"][data-bg] .topbar {
+  background: var(--glass-sheen), var(--glass-bar-fill); backdrop-filter: var(--glass-blur); color: var(--text);
+  border-bottom: 1px solid var(--au-edge); box-shadow: var(--glass-hi), 0 6px 22px rgba(0, 6, 18, .4);
+}
+html[data-style="frutiger-aurora"] .playerbar,
+html[data-style="frutiger-aurora"][data-bg] .playerbar {
+  background: var(--glass-sheen), var(--glass-bar-fill); backdrop-filter: var(--glass-blur); color: var(--text);
+  border-top: 1px solid var(--au-edge); box-shadow: var(--glass-hi), 0 -6px 22px rgba(0, 6, 18, .4);
+}
+html[data-style="frutiger-aurora"][data-player="top"] .playerbar { border-top: 0; border-bottom: 1px solid var(--au-edge); }
+html[data-style="frutiger-aurora"][data-nav="sidebar"] .nav { background: var(--glass-bar-fill); border-right: 1px solid var(--au-edge); backdrop-filter: var(--glass-blur); }
+html[data-style="frutiger-aurora"] .logo { color: var(--accent); filter: drop-shadow(0 0 8px rgba(var(--au-green), .7)); }
+html[data-style="frutiger-aurora"] :is(.nav-link, .settings-nav-link, .tab) { border-radius: 999px; color: var(--muted); font-weight: 600; }
+html[data-style="frutiger-aurora"] :is(.nav-link, .settings-nav-link, .tab):hover { color: var(--text); background: var(--hover); }
+html[data-style="frutiger-aurora"] :is(.nav-link, .settings-nav-link).active {
+  color: var(--text); background: var(--gel), rgba(var(--au-cyan), .18); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), 0 0 14px rgba(var(--au-cyan), .25);
+}
+html[data-style="frutiger-aurora"] .settings-nav-link.active .icon { color: var(--accent); }
+html[data-style="frutiger-aurora"] .tabs { border-bottom: 1px solid var(--border); }
+html[data-style="frutiger-aurora"] .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+html[data-style="frutiger-aurora"] :is(.search-input, .input, textarea.input, select.input) {
+  background: rgba(2, 12, 28, .45); color: var(--text); border: 1px solid var(--au-edge); border-radius: 999px; box-shadow: inset 0 2px 5px rgba(0, 6, 18, .45), 0 1px 0 rgba(255, 255, 255, .12);
+}
+html[data-style="frutiger-aurora"] :is(textarea.input, select.input) { border-radius: var(--radius); }
+html[data-style="frutiger-aurora"] :is(.search-input, .input, textarea.input, select.input):focus {
+  background: rgba(2, 12, 28, .55); border-color: var(--accent); box-shadow: inset 0 2px 5px rgba(0, 6, 18, .45), 0 0 0 3px rgba(var(--au-green), .28);
+}
+html[data-style="frutiger-aurora"] :is(.search-input, .input)::placeholder { color: var(--muted); opacity: 1; }
+
+/* ---------------------------------------------------------------- buttons: glossy pills */
+
+html[data-style="frutiger-aurora"] :is(.btn, .hero .btn, .chip, .tag-pill) {
+  background: var(--gel), linear-gradient(180deg, color-mix(in srgb, var(--accent) 16%, var(--surface)), color-mix(in srgb, var(--accent) 6%, var(--surface)));
+  color: var(--text); border: 1px solid var(--au-edge); border-radius: 999px; font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 2px 8px rgba(0, 6, 18, .4); transition: box-shadow .2s, filter .2s;
+}
+html[data-style="frutiger-aurora"] :is(.btn, .hero .btn, .chip):hover { color: var(--text); filter: brightness(1.15); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 0 16px rgba(var(--au-green), .4); }
+html[data-style="frutiger-aurora"] :is(.btn, .hero .btn, .chip):active { filter: brightness(.92); box-shadow: inset 0 2px 5px rgba(0, 6, 18, .5); }
+html[data-style="frutiger-aurora"] :is(.btn-primary, .hero .btn-primary, .chip.active),
+html[data-style="frutiger-aurora"] :is(.btn-primary, .hero .btn-primary, .chip.active):hover {
+  background: var(--gel-hot), linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, #ffffff), color-mix(in srgb, var(--accent) 82%, #0a5a48));
+  color: var(--accent-text); border-color: rgba(255, 255, 255, .6);
+}
+html[data-style="frutiger-aurora"] :is(.btn-outline, .btn-ghost, .hero .btn-outline) { background: transparent; box-shadow: none; }
+html[data-style="frutiger-aurora"] :is(.btn-outline, .btn-ghost, .hero .btn-outline):hover { background: var(--hover-strong); }
+html[data-style="frutiger-aurora"] .btn-danger, html[data-style="frutiger-aurora"] .btn-danger:hover {
+  background: var(--gel), linear-gradient(180deg, #d9453f, #a02420); color: #ffffff; border-color: rgba(255, 255, 255, .4);
+}
+html[data-style="frutiger-aurora"] .icon-btn { color: var(--muted); }
+html[data-style="frutiger-aurora"] .icon-btn:hover, html[data-style="frutiger-aurora"] .hero .icon-btn:hover { background: var(--hover-strong); color: var(--text); }
+html[data-style="frutiger-aurora"] :is(.icon-btn.active, .hero .icon-btn.active, .pb-queue-btn.active, .pb-mode.active, .pb-like.active) { color: var(--accent); }
+html[data-style="frutiger-aurora"] :is(.play-btn, .card-play, .pb-play) {
+  background: radial-gradient(ellipse 70% 42% at 50% 14%, rgba(255, 255, 255, .8), transparent 72%), linear-gradient(180deg, color-mix(in srgb, var(--accent) 90%, #ffffff), color-mix(in srgb, var(--accent) 80%, #0a5a48));
+  color: var(--accent-text); border: 1px solid rgba(255, 255, 255, .65);
+  box-shadow: inset 0 -3px 6px rgba(0, 70, 60, .3), 0 0 16px rgba(var(--au-green), .45), 0 4px 12px rgba(0, 6, 18, .5);
+}
+html[data-style="frutiger-aurora"] .login-error { background: rgba(160, 36, 32, .55); color: #ffffff; border: 1px solid rgba(255, 255, 255, .3); }
+html[data-style="frutiger-aurora"] .menu-item.danger { color: #ffb3ae; }
+
+/* ---------------------------------------------------------------- glass panels */
+
+/* Cards, rows and lists get no backdrop blur of their own (the sky moves behind them, so every blur would repaint every frame):
+   a tinted, slightly more opaque glass fill with the lit top edge reads as glass instead. Only the bars and overlays blur. */
+html[data-style="frutiger-aurora"] :is(.card, .feed-card, .settings-card, .track-artist, .login-card, .hero, .track-list, .user-card) {
+  background: var(--glass-sheen), var(--panel-fill); color: var(--text); backdrop-filter: none;
+  border: 1px solid var(--au-edge); border-radius: var(--radius); box-shadow: var(--glass-hi), 0 8px 26px rgba(0, 6, 18, .4);
+}
+html[data-style="frutiger-aurora"] .login-card { backdrop-filter: var(--glass-blur); background: var(--glass-sheen), var(--glass-fill); }
+html[data-style="frutiger-aurora"] .card { padding: 12px; transition: transform .25s, box-shadow .25s; }
+html[data-style="frutiger-aurora"] .card:hover { background: var(--glass-sheen), color-mix(in srgb, var(--surface) 92%, transparent); transform: translateY(-3px); box-shadow: var(--glass-hi), 0 0 18px rgba(var(--au-cyan), .22), 0 14px 30px rgba(0, 6, 18, .5); }
+html[data-style="frutiger-aurora"] .card:focus-within .card-play { opacity: 1; transform: none; }
+html[data-style="frutiger-aurora"] :is(.card-art, .feed-art, .track-art, .hero-art, .pb-art, .queue-art, .atp-art) { border: 1px solid var(--au-edge); border-radius: calc(var(--radius) * .7); box-shadow: 0 4px 14px rgba(0, 6, 18, .5); }
+html[data-style="frutiger-aurora"] :is(.card-art.round, .hero-art.round) { border-radius: 50%; }
+html[data-style="frutiger-aurora"] .track-list { padding: 6px; }
+html[data-style="frutiger-aurora"] :is(.track-row, .queue-row) { border-radius: calc(var(--radius) * .7); }
+html[data-style="frutiger-aurora"] :is(.track-row, .queue-row):hover { background: var(--hover-strong); }
+html[data-style="frutiger-aurora"] :is(.track-row, .queue-row).current { background: linear-gradient(90deg, rgba(var(--au-green), .22), rgba(var(--au-cyan), .08)); box-shadow: inset 3px 0 0 var(--accent); }
+html[data-style="frutiger-aurora"] :is(.track-row.current .track-title, .queue-row.current .queue-title) { color: var(--accent); }
+/* artwork behind the hero stays, but dimmed so the light text always reads */
+html[data-style="frutiger-aurora"] .hero-bg { filter: blur(30px) saturate(1.5) brightness(.5); }
+html[data-style="frutiger-aurora"] .hero-bg::after { background: linear-gradient(180deg, rgba(2, 12, 28, .15), rgba(2, 12, 28, .55)); }
+html[data-style="frutiger-aurora"] :is(.hero-inner, .track-hero-wave, .hero .stat) { color: var(--text); }
+html[data-style="frutiger-aurora"] :is(.hero-subtitle, .hero-meta) { opacity: 1; color: var(--muted); }
+
+/* ---------------------------------------------------------------- player: gel seek bar, pearl knob, waveform */
+
+html[data-style="frutiger-aurora"] .pb-track { height: 7px; background: rgba(2, 12, 28, .6); border: 1px solid var(--au-edge); border-radius: 999px; box-shadow: inset 0 1px 3px rgba(0, 6, 18, .6); }
+html[data-style="frutiger-aurora"] .pb-fill,
+html[data-style="frutiger-aurora"] :is(.pb-progress:hover, .pb-progress.dragging, .pb-volume:hover) .pb-fill {
+  background: var(--gel-hot), linear-gradient(90deg, var(--wave-played), rgb(var(--au-cyan))); border-radius: 999px; box-shadow: 0 0 10px rgba(var(--au-green), .55);
+}
+html[data-style="frutiger-aurora"] .pb-knob { background: radial-gradient(circle at 35% 28%, #ffffff 0 22%, color-mix(in srgb, var(--accent) 70%, #ffffff) 70%); border: 1px solid rgba(255, 255, 255, .8); box-shadow: 0 0 10px rgba(var(--au-green), .7), 0 2px 5px rgba(0, 6, 18, .6); }
+html[data-style="frutiger-aurora"] .pb-visualizer { opacity: 1; filter: drop-shadow(0 0 6px rgba(var(--au-green), .5)); }
+html[data-style="frutiger-aurora"] .waveform canvas { filter: drop-shadow(0 0 4px rgba(var(--au-cyan), .4)); }
+
+/* ---------------------------------------------------------------- menus, dialogs, toasts */
+
+html[data-style="frutiger-aurora"] :is(.menu, .modal, .queue-panel, .search-suggest, .pb-hovertime, .update-banner) {
+  background: var(--glass-sheen), color-mix(in srgb, var(--surface) 82%, transparent); color: var(--text); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--au-edge); border-radius: var(--radius); box-shadow: var(--glass-hi), var(--shadow);
+}
+html[data-style="frutiger-aurora"] .modal-overlay { background: rgba(1, 8, 20, .5); backdrop-filter: blur(8px); }
+html[data-style="frutiger-aurora"] :is(.modal-head, .queue-head) { background: var(--gel), rgba(var(--au-cyan), .1); border-bottom: 1px solid var(--border); }
+html[data-style="frutiger-aurora"] :is(.menu-item, .suggest-item, .atp-row) { border-radius: calc(var(--radius) * .6); }
+html[data-style="frutiger-aurora"] :is(.menu-item, .suggest-item, .atp-row):hover { background: var(--hover-strong); color: var(--text); }
+html[data-style="frutiger-aurora"] .menu-item .icon { color: inherit; }
+html[data-style="frutiger-aurora"] .menu-sep { background: var(--border); }
+html[data-style="frutiger-aurora"] .queue-label { color: var(--muted); letter-spacing: .12em; }
+html[data-style="frutiger-aurora"] .atp-track { background: rgba(2, 12, 28, .4); border: 1px solid var(--border); border-radius: var(--radius); }
+html[data-style="frutiger-aurora"] .toast { background: var(--glass-sheen), color-mix(in srgb, var(--surface) 88%, transparent); color: var(--text); backdrop-filter: var(--glass-blur); border: 1px solid var(--au-edge); border-radius: 999px; box-shadow: var(--glass-hi), var(--shadow); }
+html[data-style="frutiger-aurora"] .toast-error { background: #a02420; color: #ffffff; }
+
+/* ---------------------------------------------------------------- settings, switches, scrollbars, login */
+
+html[data-style="frutiger-aurora"] .settings-switch-track { background: rgba(2, 12, 28, .6); border: 1px solid var(--au-edge); box-shadow: inset 0 1px 3px rgba(0, 6, 18, .6); }
+html[data-style="frutiger-aurora"] .settings-switch-knob { background: radial-gradient(circle at 35% 28%, #ffffff 0 24%, #bfe6f2 80%); box-shadow: 0 1px 4px rgba(0, 6, 18, .6); }
+html[data-style="frutiger-aurora"] .settings-switch input:checked + .settings-switch-track { background: var(--gel), linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, #ffffff), color-mix(in srgb, var(--accent) 80%, #0a5a48)); border-color: rgba(255, 255, 255, .6); box-shadow: 0 0 12px rgba(var(--au-green), .5); }
+html[data-style="frutiger-aurora"] .settings-switch input:checked + .settings-switch-track .settings-switch-knob { background: radial-gradient(circle at 35% 28%, #ffffff 0 24%, #bfe6f2 80%); }
+html[data-style="frutiger-aurora"] .settings-preset { border: 1px solid var(--au-edge); border-radius: var(--radius); }
+html[data-style="frutiger-aurora"] .settings-preset.active { border-color: var(--accent); box-shadow: 0 0 14px rgba(var(--au-green), .4); }
+html[data-style="frutiger-aurora"] :is(.settings-range, .checkbox input) { accent-color: var(--accent); }
+html[data-style="frutiger-aurora"] .settings-warning { background: rgba(255, 190, 80, .16); border-radius: var(--radius); }
+html[data-style="frutiger-aurora"] ::-webkit-scrollbar-track { background: rgba(2, 12, 28, .35); }
+html[data-style="frutiger-aurora"] ::-webkit-scrollbar-thumb { background: var(--gel), rgba(var(--au-cyan), .45); border: 3px solid transparent; background-clip: padding-box; border-radius: 999px; }
+html[data-style="frutiger-aurora"] ::-webkit-scrollbar-thumb:hover { background-color: rgba(var(--au-green), .7); }
+html[data-style="frutiger-aurora"] .spinner { border-color: rgba(255, 255, 255, .18); border-top-color: var(--accent); }
+html[data-style="frutiger-aurora"] .login { background: transparent; }
+html[data-style="frutiger-aurora"] .login-card { border-radius: calc(var(--radius) * 1.4); }
+
+/* ---------------------------------------------------------------- motion + performance */
+
+html[data-style="frutiger-aurora"][data-theme-motion="off"] *,
+html[data-style="frutiger-aurora"][data-theme-motion="off"] *::before,
+html[data-style="frutiger-aurora"][data-theme-motion="off"] *::after,
+html[data-style="frutiger-aurora"][data-hidden] *,
+html[data-style="frutiger-aurora"][data-perf] *,
+html[data-style="frutiger-aurora"][data-perf] *::before,
+html[data-style="frutiger-aurora"][data-perf] *::after { animation: none !important; transition: none !important; }
+/* performance mode: no blur or glow, solid panels, and just the static sky */
+html[data-style="frutiger-aurora"][data-perf] {
+  --panel-fill: color-mix(in srgb, var(--surface) 97%, transparent);
+  --glass-fill: color-mix(in srgb, var(--surface) 96%, transparent);
+  --glass-bar-fill: color-mix(in srgb, var(--bar) 97%, transparent);
+  --glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, 0) 90px);
+}
+html[data-style="frutiger-aurora"][data-perf] * { backdrop-filter: none !important; filter: none !important; text-shadow: none !important; }
+html[data-style="frutiger-aurora"][data-perf] body::before,
+html[data-style="frutiger-aurora"][data-perf] body::after { display: none; }
+html[data-style="frutiger-aurora"][data-perf] #view { background: transparent; }
+html[data-style="frutiger-aurora"][data-theme-motion="off"] body::before,
+html[data-style="frutiger-aurora"][data-theme-motion="off"] body::after { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-style="frutiger-aurora"]:not([data-theme-motion="on"]) *,
+  html[data-style="frutiger-aurora"]:not([data-theme-motion="on"]) *::before,
+  html[data-style="frutiger-aurora"]:not([data-theme-motion="on"]) *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  html[data-style="frutiger-aurora"]:not([data-theme-motion="on"]) body::before,
+  html[data-style="frutiger-aurora"]:not([data-theme-motion="on"]) body::after { transform: none; }
+}
+@media (forced-colors: active) {
+  html[data-style="frutiger-aurora"] :is(.page-title, .shelf-title, .hero-title) { text-shadow: none; }
+}

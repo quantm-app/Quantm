@@ -2,6 +2,7 @@
 import * as api from './api.js';
 import { normalizeEqualizer } from './equalizer.js';
 import { Emitter } from './dom.js';
+import { transitionStyles } from './lab.js';
 import { toast } from './ui.js';
 import { isExternal } from './sources.js';
 
@@ -134,6 +135,7 @@ const defaults = {
   resumeSession: true,
   discordStatus: true,
   discordIdle: true,        // keep a "Playing Quantm" status while nothing plays
+  discordHideWhileGaming: true, // clear the status while another app is fullscreen, so Discord shows the game
   themeEffects: 'auto',     // auto (follow the system's reduce-motion setting) | on | off
   performanceMode: false,   // no blur, animations or visualizer
   performanceWhileGaming: true, // Performance mode on by itself while a game is fullscreen
@@ -143,7 +145,8 @@ const defaults = {
   keepPitch: true,          // custom speed keeps the original pitch
   crossfade: 0,             // seconds (0-12), 0 = off
   autoMix: false,           // DJ-style transitions: beat-matched, bass swap (automix.js)
-  transitionStyle: 'blend', // Auto mix: blend / auto / dropcut; pair overrides win
+  transitionStyle: 'blend', // Auto mix: blend / auto / dropcut / Lab DJ styles; pair overrides win
+  transitionTab: true,      // a small tab drops in during a transition and shows the fades (transition-tab.js)
   mixOrder: false,          // shuffle orders songs so each blends into the next (needs autoMix; mixorder.js)
   ...VISUALIZER_DEFAULTS
 };
@@ -152,12 +155,12 @@ const savedSettings = safeParse(localStorage.getItem(SETTINGS_KEY));
 export const settings = Object.assign({}, defaults, savedSettings);
 
 settings.eq = normalizeEqualizer(settings.eq);
-settings.transitionStyle = ['auto', 'blend', 'dropcut'].includes(settings.transitionStyle) ? settings.transitionStyle : defaults.transitionStyle;
+settings.transitionStyle = transitionStyles().includes(settings.transitionStyle) ? settings.transitionStyle : defaults.transitionStyle;
 // 1.2.2-dev.3 saved 'auto' as the default; smooth blend is the default now unless 'auto' was picked on purpose
 if (savedSettings?.transitionStyle === 'auto' && !savedSettings.transitionStyleChosen) settings.transitionStyle = 'blend';
 
 export function saveSettings(patch) {
-  if ('transitionStyle' in patch && !['auto', 'blend', 'dropcut'].includes(patch.transitionStyle)) patch = { ...patch, transitionStyle: defaults.transitionStyle };
+  if ('transitionStyle' in patch && !transitionStyles().includes(patch.transitionStyle)) patch = { ...patch, transitionStyle: defaults.transitionStyle };
   if (patch.eq) patch = { ...patch, eq: normalizeEqualizer(patch.eq) };
   Object.assign(settings, patch);
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));

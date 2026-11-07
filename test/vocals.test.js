@@ -196,12 +196,14 @@ test('mixmemory stores the vocal summary compactly, merges plays, and old entrie
   assert.ok(mixmemory.get('song').vocals);
   // entries from before vocal mapping load with none, and learn fine
   localStorage.setItem('quantm.mixmemory', JSON.stringify({ old: { bpm: 120, period: 0.5, offset: 0.1, confidence: 0.8, plays: 2, updated: 5 } }));
+  mixmemory.invalidate();
   assert.equal(mixmemory.get('old').vocals, null);
   assert.equal(mixmemory.get('old').plays, 2);
   mixmemory.learn('old', { grid, vocals: first });
   assert.ok(mixmemory.get('old').vocals.start != null || mixmemory.get('old').vocals.end != null);
   // junk is ignored rather than trusted
   localStorage.setItem('quantm.mixmemory', JSON.stringify({ bad: { plays: 1, updated: 1, vocals: { intro: 'zzz', outro: 7 } } }));
+  mixmemory.invalidate();
   assert.equal(mixmemory.get('bad').vocals, null);
   mixmemory.reset();
 });

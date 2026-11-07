@@ -813,7 +813,7 @@ function createMainWindow() {
   const gamingTimer = setInterval(() => {
     if (!mainWindow || mainWindow.isDestroyed()) { clearInterval(gamingTimer); return; }
     const now = otherAppFullscreen(mainWindow);
-    if (now !== gaming) { gaming = now; mainWindow.webContents.send('window:gaming', gaming); }
+    if (now !== gaming) { gaming = now; mainWindow.webContents.send('window:gaming', gaming); discord.setGaming(gaming); }
   }, 3000);
   mainWindow.webContents.on('did-finish-load', () => { if (gaming) mainWindow.webContents.send('window:gaming', true); });
   mainWindow.on('unmaximize', sendMaximized);
@@ -1044,6 +1044,7 @@ handle('window:control', (event, action) => {
 // Discord "Listening to Quantm" status
 handle('discord:update', (event, state) => discord.update(state));
 handle('discord:setEnabled', (event, on) => discord.setEnabled(on));
+handle('discord:setHideWhileGaming', (event, on) => discord.setHideWhileGaming(on));
 handle('discord:status', () => discord.status());
 
 handle('window:titlebar', (event, { color, symbolColor } = {}) => {
@@ -1093,6 +1094,15 @@ handle('update:install', () => updates.install());
 handle('update:setAuto', (event, on) => updates.setAuto(!!on));
 
 handle('app:info', () => ({ version: app.getVersion(), platform: process.platform }));
+
+// Lab DJ recipes: patterns measured from real DJ sets, shipped with the app (read only)
+handle('lab:recipes', () => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, 'src', 'data', 'lab-recipes.json'), 'utf8'));
+  } catch (e) {
+    return null; // missing or unreadable: Lab DJ plays Smooth blends
+  }
+});
 handle('app:openCrashLogs', () => shell.openPath(crashlog.folder()));
 
 // resource usage of all Quantm processes (Settings → Performance shows it)

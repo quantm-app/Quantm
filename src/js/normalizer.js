@@ -50,10 +50,10 @@ const smooth = (t) => { const x = Math.min(1, Math.max(0, t)); return x * x * (3
  * comes up to full during the first half (its bass still out), the outgoing one stays full until
  * the halfway bass swap and then goes. A dj between 0 and 1 blends the two styles (Auto mix
  * learns how much of each the listener likes). shape.center moves the handover from the middle
- * (a double drop hands over after the incoming sub has been cut for a few bars). shape.inEnd (a double drop) is the
+ * (Lab DJ blends hand over after the incoming sub has been cut for a few bars). shape.inEnd (a double drop) is the
  * point where the incoming song is already at full level, instead of the handover point.
  */
-const fadeLevel = (fadeIn, t, shape) => {
+export const fadeLevel = (fadeIn, t, shape) => {
   const amount = !shape ? 0 : shape.dj === true ? 1 : Math.min(1, Math.max(0, Number(shape.dj) || 0));
   const plain = equalPower(fadeIn, t);
   if (!amount) return plain;
@@ -72,7 +72,7 @@ const bassLevel = (fadeIn, t, width = 0.2, center = 0.5) => {
  * crossfade, 1 = full DJ style; Auto mix learns it). A DJ lets the incoming hats in early and the
  * outgoing ones out late, and never runs two sets of mids (vocals, leads) at full level together:
  * the incoming mids stay down until just before the bass swap, the outgoing mids ease down after it.
- * `center` moves the handover like the bass swap's (a double drop).
+ * `center` moves the handover like the bass swap's (Lab DJ blends).
  * `hold` ({ until, depth }, Auto mix's vocal handling) keeps the incoming mids down at `depth` dB until `until`
  * (0..1 of the blend) whatever the amount, when the outgoing song is still singing; the deeper of the two applies.
  */
@@ -272,7 +272,7 @@ export class Normalizer {
     this.setFade(audio, fadeLevel(fadeIn, Math.min(1, Math.max(0, progress)), shape));
   }
 
-  /** The shelf's corner only moves for a double drop, and goes back to normal when the bass does */
+  /** The shelf's corner only moves for a Lab DJ blend, and goes back to normal when the bass does */
   setBassCorner(deck, hz) {
     if (!hz && !deck.cornerMoved) return;
     deck.bass.frequency.cancelScheduledValues(this.ctx.currentTime);
@@ -283,7 +283,7 @@ export class Normalizer {
   /**
    * Auto mix bass swap from `from` (0..1 of the whole mix) to the end over `seconds`. The mid and high
    * bands follow on the same clock (eqLevels), so one call shapes all three EQ bands of the deck.
-   * opts (a double drop): center (where it hands over, default 0.5), corner (shelf Hz, default 220: 90 cuts only the sub)
+   * opts (Lab DJ blends): center (where it hands over, default 0.5), corner (shelf Hz, default 220: 90 cuts only the sub)
    * opts.eq: how DJ-like the mids and highs move, 0..1 (see eqLevels; missing = they stay flat)
    * opts.midHold: { until, depth } holds the incoming mids down longer, while the outgoing vocals finish (see eqLevels)
    */

@@ -11,6 +11,7 @@ export const PACKS = {
   'holo-card': { load: () => import('./packs/holo-card.js') },
   'cassette': { load: () => import('./packs/cassette.js') },
   'twin-deck': { layout: 'twin-deck', load: () => import('./packs/twin-deck.js') },
+  'producer': { layout: 'producer', load: () => import('./packs/producer.js') },
   'spectral-ledger': { load: () => import('./packs/spectral-ledger.js') },
   'contour': { load: () => import('./packs/contour.js') },
   'sunrise': { load: () => import('./packs/sunrise.js') },

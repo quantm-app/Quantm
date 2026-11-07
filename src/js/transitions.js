@@ -1,11 +1,14 @@
 // Genre-specific Auto mix transitions. Auto used to pick between a smooth blend and a drop cut; it now also asks
 // what a DJ would do with these two songs: hip-hop is cut on the downbeat, drum and bass or dubstep with two
 // known drops gets a double drop, and slow quiet music is faded out through a low-pass filter. Everything here
-// is pure planning (media seconds); the player carries it out with the machinery it already has (the drop cut
+// is pure planning (media seconds); the player carries it out with the machinery it already has (the Lab cut
 // schedule, the blend's fades and bass swap, a low-pass on the deck).
 import { tempoFit } from './mixorder.js';
 
 export const GENRE_LABELS = Object.freeze({ quickcut: 'Quick cut', doubledrop: 'Double drop', filterfade: 'Filter fade' });
+
+/** The name of a transition's style, for the Auto mix monitor and the transition tab */
+export const styleName = (style, recipe, genre) => recipe ? `Lab DJ · ${recipe}` : GENRE_LABELS[genre] || (style === 'dropcut' ? 'Drop cut' : 'Smooth blend');
 
 /** Songs whose tags say they are mellow: a long filtered fade suits them whatever their tempo */
 const MELLOW = /deep.?house|ambient|down.?tempo|chill(?:out|wave|step)?|lo-?fi|lounge|organic house|melodic house|dub techno|trip.?hop|atmospheric|ethereal|new age/i;

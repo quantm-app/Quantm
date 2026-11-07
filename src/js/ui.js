@@ -4,8 +4,9 @@ import { icon } from './icons.js';
 import * as localPlaylists from './local-playlists.js';
 import { offline } from './offline.js';
 import { isExternal, isExternalId, isBandcamp, sourceLabel } from './sources.js';
-import { getCues, addCue, removeCue, renameCue, setMixIn, setMixOut, cueEvents, getPair, setPair, transitionFor } from './cues.js';
+import { getCues, addCue, removeCue, renameCue, setMixIn, setMixOut, cueEvents } from './cues.js';
 import { formatCueTime, parseCueTime } from './cue-time.js';
+import { loadEveryTrack } from './api.js'; // api.js imports nothing, so no cycle
 import { settings } from './store.js'; // only read when a menu opens, so the store <-> ui import cycle is safe
 
 // Lazy imports avoid circular-import timing issues (store/player import ui.js)
@@ -556,17 +557,8 @@ export function trackList(pager, opts = {}) {
     if (pager.done) return tracks;
     if (everything) return everything;
     try {
-      const fast = new _api.Pager(pager.resource, Object.assign({}, pager.params, { limit: 200 }), pager.map);
-      fast.afterLoad = pager.afterLoad;
-      const all = [];
-      const seen = new Set();
-      for (let pages = 0; !fast.done && pages < 100; pages++) {
-        for (const t of await fast.next()) {
-          if (t && t.kind === 'track' && !seen.has(t.id)) { seen.add(t.id); all.push(t); }
-        }
-      }
-      everything = all;
-      return all;
+      everything = await loadEveryTrack(pager);
+      return everything;
     } catch (e) {
       while (!pager.done) await loadMore();
       return tracks;
@@ -1008,47 +1000,6 @@ function readCueField(field, track) {
   field.input.setCustomValidity(Number.isNaN(value) ? 'Enter m:ss or seconds within the song’s duration.' : '');
   if (Number.isNaN(value)) field.input.reportValidity();
   return value;
-}
-
-export function transitionDialog(from, to) {
-  const pair = getPair(from.id, to.id);
-  const defaults = transitionFor(from.id, to.id, player().crossfadeSeconds());
-  const fade = defaults.custom || defaults.fade ? defaults.fade : 6;
-  const out = cueTimeField(`Leave ${from.title} at`, pair?.out, getCues(from.id).mixOut == null ? 'end' : formatCueTime(getCues(from.id).mixOut));
-  const into = cueTimeField(`Start ${to.title} at`, pair?.in, formatCueTime(getCues(to.id).mixIn || 0));
-  const range = h('input', { type: 'range', min: 0, max: 20, step: 0.5, value: fade, 'aria-label': 'Fade' });
-  const number = h('input.input.cue-fade-number', { type: 'number', min: 0, max: 20, step: 0.5, value: fade, 'aria-label': 'Fade seconds' });
-  const style = h('select.input', { 'aria-label': 'Transition style' },
-    [['', 'Use setting'], ['auto', 'Auto'], ['blend', 'Smooth blend'], ['dropcut', 'Drop cut']].map(([value, label]) =>
-      h('option', { value, selected: (pair?.style || '') === value }, label)));
-  range.addEventListener('input', () => { number.value = range.value; });
-  number.addEventListener('input', () => { if (number.value !== '' && number.validity.valid) range.value = number.value; });
-  const save = (songs) => {
-    const leave = readCueField(out, from);
-    if (Number.isNaN(leave)) return;
-    const start = readCueField(into, to);
-    if (Number.isNaN(start)) return;
-    if (number.value === '' || !number.reportValidity()) return;
-    if (songs) {
-      setMixOut(from.id, leave == null ? getCues(from.id).mixOut : leave);
-      setMixIn(to.id, start == null ? getCues(to.id).mixIn : start);
-      setPair(from.id, to.id, null);
-    } else setPair(from.id, to.id, { out: leave, in: start, fade: Number(number.value), style: style.value });
-    dialog.close();
-  };
-  const dialog = modal(`Transition: ${from.title} → ${to.title}`, h('div.cue-editor',
-    out.row, into.row,
-    h('label.cue-field', h('span.field-label', 'Transition style'), style),
-    h('label.cue-field', h('span.field-label', 'Fade'), h('span.cue-fade', range, number, 's')),
-    h('p.muted.small', 'Blank times use the songs’ mix points. Saving as song mix points uses the default fade; the fade above is saved for this pair only.'),
-    h('p.muted.small', 'Drop cut uses a confirmed drop at or after the start marker. Leave time starts its build; fade length applies to smooth blends.'),
-    h('div.modal-actions',
-      button('Cancel', () => dialog.close(), 'btn-ghost'),
-      button('Reset', () => { setPair(from.id, to.id, null); dialog.close(); }, 'btn-ghost'),
-      button('Save as the songs’ mix points', () => save(true), 'btn-outline'),
-      button('Save for this pair', () => save(false), 'btn-primary')
-    )
-  ));
 }
 
 export function mixPointsDialog(track) {

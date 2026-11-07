@@ -83,7 +83,7 @@ test('console follows both decks, settings, queue navigation, pause and beat mar
   assert.ok(Object.values(store.handlers).every(list => list.length === 0));
 });
 
-test('a drop cut holds the crossfader on A, sweeps A\'s bass away, then snaps to B', async t => {
+test('a drop cut holds the crossfader on A, sweeps A\'s bass away, then snaps to B; Lab DJ names its recipe', async t => {
   const timers = mock.method(globalThis, 'setInterval', () => 7);
   const cancel = mock.method(globalThis, 'clearInterval', () => {});
   const NativeObserver = globalThis.MutationObserver;
@@ -94,7 +94,7 @@ test('a drop cut holds the crossfader on A, sweeps A\'s bass away, then snaps to
   document.documentElement.dataset = { themeMotion: 'on', beat: 'a', automix: 'mixing' };
   const tracks = [1, 2].map(id => ({ id, title: `Record ${id}`, user: { username: `Artist ${id}` }, duration: 240000 }));
   const grid = { bpm: 128, period: 60 / 128, offset: 0 };
-  let mix = { style: 'dropcut', phase: 'build', progress: 0.3 };
+  let mix = { style: 'dropcut', phase: 'build', progress: 0.3, lab: null };
   const player = Object.assign(new Emitter(), {
     playing: true, autoMix: true, current: tracks[0], index: 0, queue: tracks,
     audio: { currentTime: 1, playbackRate: 1 },
@@ -121,26 +121,26 @@ test('a drop cut holds the crossfader on A, sweeps A\'s bass away, then snaps to
   assert.equal(find(page, 'td-crossfader').attributes.get('aria-valuenow'), '0');
   assert.equal(a.style['--td-eq-angle'], '-30deg'); // 2 s into an 8 s sweep
   assert.equal(b.style['--td-eq-angle'], '-120deg');
-  mix = { style: 'dropcut', phase: 'drop', progress: 0.9 };
+  mix = { style: 'dropcut', phase: 'drop', progress: 0.9, lab: 'dance:fast:drop:2' };
   clock.mock.mockImplementation(() => 1000); sync();
-  assert.equal(find(page, 'td-session-status').textContent, 'DROP CUT · DROP');
-  assert.equal(find(page, 'td-phase-error').textContent, 'Cuts on the drop');
+  assert.equal(find(page, 'td-session-status').textContent, 'LAB DJ · DROP CUT · DROP');
+  assert.equal(find(page, 'td-phase-error').textContent, 'Recipe dance:fast:drop:2');
   assert.equal(consoleNode.style['--td-xfade'], '1');
   assert.equal(a.style['--td-eq-angle'], '-120deg');
   assert.equal(b.style['--td-eq-angle'], '0deg');
-  // a blend keeps the beat lock readout and the shared crossfader
-  mix = { style: 'blend', progress: 0.4 };
+  // a Lab DJ blend keeps the beat lock readout and the shared crossfader
+  mix = { style: 'blend', progress: 0.4, lab: 'dance:fast:blend:0' };
   player.fading = { from: tracks[0], to: tracks[1], style: 'blend' };
   clock.mock.mockImplementation(() => 2000); sync();
-  assert.equal(find(page, 'td-session-status').textContent, 'SMOOTH BLEND');
-  assert.equal(find(page, 'td-phase-error').textContent, 'Finding the beat');
+  assert.equal(find(page, 'td-session-status').textContent, 'LAB DJ · SMOOTH BLEND');
+  assert.equal(find(page, 'td-phase-error').textContent, 'Finding the beat · dance:fast:blend:0');
   assert.equal(consoleNode.style['--td-xfade'], '');
   assert.equal(a.style['--td-eq-angle'], '');
   assert.equal(find(page, 'td-crossfader').attributes.get('aria-valuenow'), '40');
   // Auto's genre transitions are named on the console
   let at = 3000;
   for (const [genre, style, label] of [['doubledrop', 'blend', 'DOUBLE DROP'], ['filterfade', 'blend', 'FILTER FADE'], ['quickcut', 'dropcut', 'QUICK CUT · BUILD']]) {
-    mix = { style, genre, phase: 'build', progress: 0.4 };
+    mix = { style, genre, phase: 'build', progress: 0.4, lab: null };
     player.fading = { from: tracks[0], to: tracks[1], style, schedule: { start: 10, cut: 18, drop: 18.1, kill: { style: 'none' } } };
     clock.mock.mockImplementation(() => (at += 1000)); sync();
     assert.equal(find(page, 'td-session-status').textContent, label);

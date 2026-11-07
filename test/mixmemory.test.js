@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analyze, tempoOptions } from '../src/js/beats.js';
-import { createListener, fromWaveform, get, learn, rememberDrop, count, reset } from '../src/js/mixmemory.js';
+import { createListener, fromWaveform, get, learn, rememberDrop, count, reset, invalidate } from '../src/js/mixmemory.js';
 import { installBrowser } from './helpers/browser.js';
 
 installBrowser();
@@ -271,6 +271,7 @@ test('storage persists compact entries, evicts the least recently updated, and r
     beatToEnd: false, plays: 1, updated: i + 1, heard: 88
   }]));
   localStorage.setItem('quantm.mixmemory', JSON.stringify(entries));
+  invalidate(); // written behind the module's back
   learn('new', play({ grid: { period: 0.46875321, offset: 10.217812, confidence: 0.87654 }, drumsIn: 12.123 }));
   assert.equal(count(), 3000);
   assert.equal(get(0), null);
@@ -309,6 +310,7 @@ test('invalid inputs, malformed storage, and storage access errors never throw',
   }
   for (const value of ['broken JSON', 'null', '[]', '{"bad":null}', '{"bad":4}', '{"bad":{}}']) {
     localStorage.setItem('quantm.mixmemory', value);
+    invalidate();
     assert.equal(count(), 0);
     assert.equal(get('bad'), null);
   }
@@ -337,4 +339,59 @@ test('adding 300 seconds in 250 ms chunks takes under 600 ms total', t => {
   assert.ok(elapsed < 600, `adding samples took ${elapsed.toFixed(2)} ms`);
   assert.ok(listener.summary(300).grid);
   t.diagnostic(`300 seconds added in ${elapsed.toFixed(2)} ms (${(elapsed / 1200).toFixed(3)} ms per chunk)`);
+});
+
+test('get serves repeated calls from memory, sees new writes, and callers cannot corrupt the cache', () => {
+  reset();
+  const entries = Object.fromEntries(Array.from({ length: 300 }, (_, i) => [String(i), {
+    bpm: 120, period: 0.5, offset: 0.1, confidence: 0.8, drumsIn: 12, outroStart: 72,
+    key: { tonic: 3, mode: 'minor', confidence: 0.7, chroma: Array(12).fill(0.5) },
+    beatToEnd: false, plays: 1, updated: i + 1, heard: 88
+  }]));
+  localStorage.setItem('quantm.mixmemory', JSON.stringify(entries));
+  invalidate();
+  const real = localStorage.getItem.bind(localStorage);
+  let reads = 0;
+  const original = Object.getOwnPropertyDescriptor(localStorage, 'getItem');
+  localStorage.getItem = key => { if (key === 'quantm.mixmemory') reads++; return real(key); };
+  try {
+    for (let i = 0; i < 100; i++) get(String(i + 1));
+    assert.equal(reads, 1, 'storage is read once for 100 calls');
+    count(); get('nope');
+    assert.equal(reads, 1);
+    // a write by this module shows up at once (and costs one more read)
+    learn('fresh', play({ grid: { period: 0.5, offset: 0.1, confidence: 0.9 }, drumsIn: 9 }));
+    assert.ok(get('fresh'));
+    assert.equal(count(), 301);
+    assert.equal(reads, 3, 'learn rereads storage before writing');
+    reset();
+    assert.equal(get('fresh'), null);
+    assert.equal(count(), 0);
+    // mutating what get returns never reaches the cache
+    learn('song', play({ grid: { period: 0.5, offset: 0.1, confidence: 0.9 }, drumsIn: 9 }));
+    const first = get('song');
+    const before = JSON.stringify(first);
+    first.bpm = 1; first.drop = { time: 1 }; first.plays = 99;
+    if (first.key) first.key.tonic = 11;
+    assert.equal(JSON.stringify(get('song')), before);
+  } finally {
+    if (original) Object.defineProperty(localStorage, 'getItem', original); else delete localStorage.getItem;
+    reset();
+  }
+});
+
+test('a writer rereads storage first, so a stale cache cannot delete another window\'s newer song', () => {
+  reset();
+  learn('mine', play({ grid: { period: 0.5, offset: 0.1, confidence: 0.9 } }));
+  assert.ok(get('mine')); // this window now has the store cached
+  // another window learns a song; the storage event has not been handled here yet
+  const stored = JSON.parse(localStorage.getItem('quantm.mixmemory'));
+  stored.theirs = { ...stored.mine, updated: Date.now() + 1 };
+  localStorage.setItem('quantm.mixmemory', JSON.stringify(stored));
+  learn('third', play({ grid: { period: 0.4, offset: 0.1, confidence: 0.9 } }));
+  assert.ok(JSON.parse(localStorage.getItem('quantm.mixmemory')).theirs, 'the other window\'s entry survived');
+  rememberDrop('mine', { grid: { period: 0.5, offset: 0.1, confidence: 0.9 }, drop: { time: 30, confidence: 1 } });
+  assert.ok(JSON.parse(localStorage.getItem('quantm.mixmemory')).theirs);
+  assert.ok(get('theirs') && get('third'));
+  reset();
 });

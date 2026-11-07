@@ -5,6 +5,7 @@
 // Times are media seconds (positions in the song, independent of playback speed).
 
 import { Emitter } from './dom.js';
+import { MAX_FADE, normalizeCurve } from './transition-model.js';
 
 const KEY = 'quantm.cues';
 const MAX_CUES = 9;
@@ -105,7 +106,7 @@ export function setMixOut(id, t) {
 
 const pairKey = (a, b) => `${a}>${b}`;
 
-/** Override for one specific transition: { out, in, fade } (any may be null = use the default) */
+/** Override for one specific transition: { out, in, fade, style?, curve? } (any may be null = use the default) */
 export function getPair(fromId, toId) {
   const p = data.pairs[pairKey(fromId, toId)];
   return p ? Object.assign({}, p) : null;
@@ -119,9 +120,11 @@ export function setPair(fromId, toId, value) {
     data.pairs[key] = {
       out: value.out == null ? null : time(value.out),
       in: value.in == null ? null : time(value.in),
-      fade: Number.isFinite(fade) ? Math.min(20, Math.max(0, fade)) : null
+      fade: Number.isFinite(fade) ? Math.min(MAX_FADE, Math.max(0, fade)) : null
     };
     if (['auto', 'blend', 'dropcut'].includes(value.style)) data.pairs[key].style = value.style;
+    const curve = normalizeCurve(value.curve);
+    if (curve) data.pairs[key].curve = curve;
   }
   persist(fromId);
 }
@@ -131,6 +134,7 @@ export function setPair(fromId, toId, value) {
  *   out:  media time in `from` where the mix starts (null = the usual crossfade near the end)
  *   in:   media time in `to` where it starts playing
  *   fade: seconds the overlap lasts (0 = a clean cut)
+ *   curve: the pair's volume curve ({ dj, center }), when it has one
  *   custom: true when any mix point applies (then it mixes even with crossfade turned off)
  */
 export function transitionFor(fromId, toId, crossfadeSeconds = 0, defaultFade = 6) {
@@ -143,7 +147,7 @@ export function transitionFor(fromId, toId, crossfadeSeconds = 0, defaultFade = 
   let fade = pair && pair.fade != null ? pair.fade : crossfadeSeconds;
   if (custom && !(pair && pair.fade != null) && !crossfadeSeconds) fade = defaultFade;
   return { out: out == null ? null : out, in: into == null ? 0 : into, fade, custom,
-    ...(pair?.style ? { style: pair.style } : {}) };
+    ...(pair?.style ? { style: pair.style } : {}), ...(pair?.curve ? { curve: pair.curve } : {}) };
 }
 
 /** For tests: forget everything held in memory and storage */

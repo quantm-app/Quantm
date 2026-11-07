@@ -124,12 +124,12 @@ export function createVisualizer() {
 
   const quiet = () => {
     const root = document.documentElement;
-    return root.hasAttribute('data-perf') || root.hasAttribute('data-hidden');
+    return root.hasAttribute('data-perf') || root.hasAttribute('data-hidden') || root.hasAttribute('data-no-visualizer');
   };
 
   function draw(now = performance.now()) {
     frame = null;
-    if (quiet()) return; // minimized or performance mode: no drawing at all
+    if (quiet()) return; // minimized, performance mode or a theme that replaces it: no drawing at all
     // 60 fps is plenty for bars; on 120-165 Hz screens every redraw also re-blurs glass themes behind it
     if (now - lastDraw < MIN_FRAME_MS) { frame = requestAnimationFrame(draw); return; }
     lastDraw = now;
@@ -306,7 +306,8 @@ export function createVisualizer() {
 
   const start = () => {
     layout();
-    canvas.classList.toggle('hidden', !settings.visualizer || document.documentElement.hasAttribute('data-perf'));
+    const root = document.documentElement;
+    canvas.classList.toggle('hidden', !settings.visualizer || root.hasAttribute('data-perf') || root.hasAttribute('data-no-visualizer'));
     if (quiet()) return;
     idle = 0;
     if (!frame) frame = requestAnimationFrame(draw);
@@ -319,6 +320,8 @@ export function createVisualizer() {
   // the accent can also follow the playing song's artwork (Settings → Appearance)
   document.addEventListener('accentchange', () => { colors = readColors(); start(); });
   document.addEventListener('appvisibility', start);
+  // a theme can set <html data-no-visualizer> to replace this visualizer with its own; follow it both ways
+  new MutationObserver(start).observe(document.documentElement, { attributes: true, attributeFilter: ['data-no-visualizer'] });
   start();
   return canvas;
 }

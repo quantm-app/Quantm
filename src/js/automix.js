@@ -307,6 +307,47 @@ export function phraseMix({ grid, dur, now = 0, rate = 1, outroStart = null, fac
   return { at: best.at, span: best.span, bars: best.bars };
 }
 
+// how much a start on a phrase line is worth, counted in bars of distance from the ideal start (the song's own
+// ending, or where its drums leave): an 8-bar line up to 4 bars off (16-bar: 5) beats the nearest mid-phrase bar line
+const LAB_LINE_BONUS = { 16: 5, 8: 4 };
+
+/**
+ * Where a Lab DJ blend of `bars` bars starts: on a bar line of the outgoing song, so the incoming song enters on a
+ * bar. A downbeat that was really heard (grid.phrase) also gives 8- and 16-bar phrase lines, which win over a
+ * mid-phrase bar line unless they are more than 4 bars (5 for 16) off. Without one the bars are a guess counted from the
+ * first beat (still bar lines, no phrase preference). The blend keeps its whole-bar length:
+ *   outroStart: where the drums leave (when known): the start is the bar line nearest it, never well after it; else
+ *               the blend ends with the song, skipping at most a phrase (or ~20 s) of the tail, like phraseMix
+ * A blend longer than a quarter of the song may start before 75% of it (it cannot start any later and still fit).
+ * Returns { at, span, bars, phrase } (phrase: it starts on an 8-bar line of a heard downbeat) or null (no grid,
+ * no bar line in the window, or too late for the next song's look-ahead): then the blend ends with the song.
+ */
+export function labBlendStart({ grid, dur, now = 0, rate = 1, outroStart = null, bars }) {
+  if (!(grid?.period > 0) || !(dur > 0) || !(bars >= 1)) return null;
+  const bar = 4 * grid.period, span = bars * bar, line = PHRASE_LINE * bar;
+  const origin = Number.isFinite(grid.downbeat) ? grid.downbeat : Number.isFinite(grid.offset) ? grid.offset : 0;
+  const heard = !!grid.phrase && grid.confidence >= MIN_PHRASE_CONFIDENCE;
+  const tailMax = Math.min(line, 20 * rate), latest = dur - span + 0.3 * rate;
+  const notTooEarly = dur * 0.75 <= latest - bar ? dur * 0.75 : 0;
+  const first = Math.ceil((Math.max(now + PHRASE_LEAD * rate, notTooEarly) - origin) / bar - 1e-9);
+  const last = Math.floor((latest - origin) / bar + 1e-9);
+  const hasOutro = Number.isFinite(outroStart);
+  let best = null;
+  // first look for a start near the outro; a song whose outro is out of reach ends with the song instead
+  for (let pass = hasOutro ? 0 : 1; pass < 2 && !best; pass++) {
+    for (let k = first; k <= last; k++) {
+      const at = origin + k * bar, tail = dur - at - span;
+      if (pass === 0 ? Math.abs(at - outroStart) > line : tail > tailMax) continue;
+      const place = pass === 0 ? Math.abs(at - outroStart) / bar + (at > outroStart + bar / 2 ? 1.5 * (at - outroStart) / bar : 0)
+        : Math.max(0, tail) / bar;
+      const phraseLine = heard ? (k % 16 === 0 ? 16 : k % 8 === 0 ? 8 : 0) : 0;
+      const cost = place - (LAB_LINE_BONUS[phraseLine] ?? 0);
+      if (!best || cost < best.cost) best = { cost, at, phrase: phraseLine > 0 };
+    }
+  }
+  return best && { at: best.at, span, bars, phrase: best.phrase };
+}
+
 export const CLASH_MIN_SECONDS = 8;  // shortest blend when the songs' keys clash and the phrase grid is not in use
 const CLASH_MIN_BARS = 8;            // ...and when it is
 

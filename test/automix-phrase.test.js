@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { installBrowser } from './helpers/browser.js';
 import * as mixmemory from '../src/js/mixmemory.js';
 import * as mixlearn from '../src/js/mixlearn.js';
-import { matchTempo, alignedStart, memoryGrid, phraseMix, PHRASE_LEAD } from '../src/js/automix.js';
+import { matchTempo, alignedStart, memoryGrid, phraseMix, labBlendStart, PHRASE_LEAD } from '../src/js/automix.js';
 
 installBrowser();
 const startup = mock.method(globalThis, 'setInterval', () => 0);
@@ -76,6 +76,72 @@ test('a start is never more than a quarter of the song from the end', () => {
     const plan = phraseMix({ grid: grid(), dur, now: dur * 0.7 - 20 });
     if (plan) assert.ok(plan.at >= dur * 0.75 - 1e-6, `${dur}: ${plan.at}`);
   }
+});
+
+// ---- labBlendStart: where a Lab DJ blend of a given length begins ----------------------------------
+
+const barLine = (t, g = grid()) => { const n = (t - g.downbeat) / BAR; near(n, Math.round(n), 1e-6); return Math.round(n); };
+
+test('a Lab blend starts on the phrase line near the end of the song and keeps its whole-bar length', () => {
+  const g = grid();
+  const eight = labBlendStart({ grid: g, dur: 201, now: 100, bars: 8 });
+  assert.deepEqual([eight.bars, eight.phrase], [8, true]);
+  near(eight.span, 8 * BAR);
+  onLine(eight.at);
+  near(eight.at, g.downbeat + 12 * LINE);                 // 183.85: 2.15 s of the song are skipped, to start on the 8-bar line
+  assert.ok(eight.at + eight.span <= 201 + 0.3 + 1e-6);
+  // a 16-bar blend (30 s) keeps its length and takes the 8-bar line in its window
+  const sixteen = labBlendStart({ grid: g, dur: 201, now: 100, bars: 16 });
+  assert.deepEqual([sixteen.bars, sixteen.phrase], [16, true]);
+  near(sixteen.span, 16 * BAR);
+  near(sixteen.at, g.downbeat + 11 * LINE);
+  // a mid-phrase bar line is only taken when the phrase line would skip too much of the song (more than 4 bars)
+  const far = labBlendStart({ grid: g, dur: 201 + 5 * BAR, now: 100, bars: 8 });
+  assert.equal(far.phrase, false, 'the phrase line 6 bars from the end loses to the bar line at the end');
+  assert.ok(201 + 5 * BAR - (far.at + far.span) < BAR + 0.3 && barLine(far.at) % 8 !== 0);
+});
+
+test('a Lab blend begins at the bar line where the drums leave (outroStart), never well after it', () => {
+  const g = grid();
+  const early = labBlendStart({ grid: g, dur: 201, now: 100, bars: 8, outroStart: 169 });
+  near(early.at, g.downbeat + 11 * LINE);                 // 168.85, the phrase line beside 169, not the one at the end
+  const late = labBlendStart({ grid: g, dur: 201, now: 100, bars: 8, outroStart: 183 });
+  near(late.at, g.downbeat + 12 * LINE);
+  // an outro beyond reach (before the blend may start): the blend ends with the song instead
+  const gone = labBlendStart({ grid: g, dur: 201, now: 100, bars: 8, outroStart: 100 });
+  near(gone.at, g.downbeat + 12 * LINE);
+  assert.equal(labBlendStart({ grid: g, dur: 201, now: 100, bars: 8, outroStart: NaN }).at, gone.at);
+});
+
+test('without a heard downbeat a Lab blend still starts on a bar line, counted from the first beat', () => {
+  const g = grid(128, { phrase: false, downbeat: 0.1 });
+  const plan = labBlendStart({ grid: g, dur: 201, now: 100, bars: 8 });
+  assert.equal(plan.phrase, false);
+  const n = (plan.at - 0.1) / BAR;
+  near(n, Math.round(n), 1e-6);
+  assert.ok(201 - (plan.at + plan.span) < BAR + 0.3, 'ends within a bar of the song, no phrase to wait for');
+  // no downbeat at all: the offset is the stand-in; a shaky beat gives no phrase lines either
+  assert.ok(labBlendStart({ grid: { ...g, downbeat: undefined, offset: 0.1 }, dur: 201, now: 100, bars: 8 }));
+  assert.equal(labBlendStart({ grid: grid(128, { confidence: 0.3 }), dur: 201, now: 100, bars: 8 }).phrase, false);
+});
+
+test('a Lab blend longer than a quarter of the song may start before 75% of it; short songs and late calls fall back', () => {
+  const g = grid();
+  const long = labBlendStart({ grid: g, dur: 201, now: 100, bars: 32 });
+  assert.equal(long.bars, 32);
+  assert.ok(long.at < 201 * 0.75 && long.at + long.span <= 201.3 && 201 - (long.at + long.span) < 8 * BAR);
+  // ...but a blend that fits keeps to the last quarter
+  const short = labBlendStart({ grid: g, dur: 100, now: 10, bars: 8 });
+  assert.ok(short.at >= 75 - 1e-6);
+  // too late for the next song's look-ahead, or nothing to count bars on
+  assert.equal(labBlendStart({ grid: g, dur: 201, now: 195, bars: 8 }), null);
+  assert.equal(labBlendStart({ grid: null, dur: 201, now: 100, bars: 8 }), null);
+  assert.equal(labBlendStart({ grid: g, dur: 0, now: 0, bars: 8 }), null);
+  assert.equal(labBlendStart({ grid: g, dur: 201, now: 100, bars: 0 }), null);
+  // a faster playback speed keeps the same bars in media seconds
+  const fast = labBlendStart({ grid: g, dur: 201, now: 100, rate: 1.25, bars: 8 });
+  near(fast.span, 8 * BAR);
+  assert.ok(fast.at >= 100 + PHRASE_LEAD * 1.25);
 });
 
 // ---- the incoming song: bar 1 meets bar 1 -----------------------------------------------------

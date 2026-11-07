@@ -258,6 +258,10 @@ export const PRESETS = {
     accent: '#e4af64', accentText: '#24190b', bg: '#0c0e10', surface: '#191b1d', bar: '#121416',
     text: '#fff1d6', muted: '#bcb09b', wave: '#625b4f', wavePlayed: '#e4af64'
   },
+  'Producer': {
+    accent: '#f39c3c', accentText: '#20170d', bg: '#232a30', surface: '#343e46', bar: '#2b3238',
+    text: '#e2e8eb', muted: '#afbdc5', wave: '#61727d', wavePlayed: '#f39c3c'
+  },
   'Twin Deck': {
     accent: '#a9d4ef', accentText: '#101820', bg: '#111418', surface: '#20262d', bar: '#171b20',
     text: '#edf1f5', muted: '#b0bcc8', wave: '#596979', wavePlayed: '#a9d4ef'
@@ -289,6 +293,18 @@ export const PRESETS = {
   'Warehouse': {
     accent: '#d8ed42', accentText: '#101200', bg: '#000000', surface: '#222424', bar: '#111313',
     text: '#f5f5ef', muted: '#b6bbb5', wave: '#7f887b', wavePlayed: '#d8ed42'
+  },
+  'DORFic': {
+    accent: '#ff7a00', accentText: '#1a1a1a', bg: '#f1f2f4', surface: '#ffffff', bar: '#ffffff',
+    text: '#17191c', muted: '#555a61', wave: '#c4c9d0', wavePlayed: '#ff7a00'
+  },
+  'Frutiger Aurora': {
+    accent: '#3fe8bd', accentText: '#04222a', bg: '#07182c', surface: '#0f2e44', bar: '#0a2238',
+    text: '#eefaff', muted: '#c8e0ec', wave: '#2f5a73', wavePlayed: '#3fe8bd'
+  },
+  'Dark Aero': {
+    accent: '#35c6ff', accentText: '#00121c', bg: '#07090d', surface: '#161a20', bar: '#0d1015',
+    text: '#eaf2f8', muted: '#a3b3c2', wave: '#3a4654', wavePlayed: '#35c6ff'
   },
   // colors are replaced live from the playing song's artwork (appearance.js)
   'Album Match': {
@@ -350,6 +366,7 @@ export const PRESET_STYLES = {
   'Contour': 'contour',
   'Spectral Ledger': 'spectral-ledger',
   'Twin Deck': 'twin-deck',
+  'Producer': 'producer',
   'Cassette': 'cassette',
   'Cassette Night': 'cassette',
   'Holo Card': 'holo-card',
@@ -357,6 +374,9 @@ export const PRESET_STYLES = {
   'Sampler': 'sampler',
   'Patchbay': 'patchbay',
   'Warehouse': 'warehouse',
+  'DORFic': 'dorfic',
+  'Frutiger Aurora': 'frutiger-aurora',
+  'Dark Aero': 'dark-aero',
   'Album Match': 'album'
 };
 
@@ -380,7 +400,7 @@ export const PRESET_FAMILIES = {
 };
 
 /** Corner roundness each style preset looks best with (others keep the user's value) */
-export const PRESET_RADIUS = { 'Terminal Multiplexer': 0, 'Pocket Quantm': 14, 'Listening Room': 18, 'Y2K': 3, 'Glass': 16, 'Neon': 4, 'Pixel': 0, 'Minimal': 6, 'Liquid Glass': 22, 'Liquid Glass Dark': 22, 'Hextech': 2, 'OLED': 8, 'E-ink': 0, 'Industrial': 2, 'Album Match': 14, 'Frutiger Aero': 20, 'Terminal': 0, 'Windows 98': 0, 'Vinyl': 3, 'Brutalist': 0, 'Tokyo Night': 8, 'Tokyo Night Storm': 8, 'Tokyo Night Day': 8, 'Rosé Pine': 10, 'Rosé Pine Moon': 10, 'Rosé Pine Dawn': 10, 'Gruvbox Dark': 4, 'Gruvbox Light': 4, 'Sodium Underpass': 8, 'Sodium Blue Hour': 8, 'Sodium Last Tram': 8, 'Tiling': 0, 'Tiling Light': 0, 'Glitch': 0, 'Vapor Mall': 12, 'Felt': 18, 'Felt Burgundy': 18, 'Blueprint': 0, 'Ink Wash': 2, 'Ink Wash Night': 2, 'LED Board': 2, 'LED Board Green': 2, 'LED Board Red': 2, 'Risograph': 2, 'Risograph Night': 2, 'Chrome': 14, 'Rave Flyer': 0, 'Sunrise': 14, 'Sunrise Night': 14, 'Contour': 8, 'Spectral Ledger': 6, 'Twin Deck': 6, 'Cassette': 6, 'Cassette Night': 6, 'Holo Card': 12, 'Signal Route': 14, 'Sampler': 8, 'Patchbay': 5, 'Warehouse': 2 };
+export const PRESET_RADIUS = { 'Terminal Multiplexer': 0, 'Pocket Quantm': 14, 'Listening Room': 18, 'Y2K': 3, 'Glass': 16, 'Neon': 4, 'Pixel': 0, 'Minimal': 6, 'Liquid Glass': 22, 'Liquid Glass Dark': 22, 'Hextech': 2, 'OLED': 8, 'E-ink': 0, 'Industrial': 2, 'Album Match': 14, 'Frutiger Aero': 20, 'Terminal': 0, 'Windows 98': 0, 'Vinyl': 3, 'Brutalist': 0, 'Tokyo Night': 8, 'Tokyo Night Storm': 8, 'Tokyo Night Day': 8, 'Rosé Pine': 10, 'Rosé Pine Moon': 10, 'Rosé Pine Dawn': 10, 'Gruvbox Dark': 4, 'Gruvbox Light': 4, 'Sodium Underpass': 8, 'Sodium Blue Hour': 8, 'Sodium Last Tram': 8, 'Tiling': 0, 'Tiling Light': 0, 'Glitch': 0, 'Vapor Mall': 12, 'Felt': 18, 'Felt Burgundy': 18, 'Blueprint': 0, 'Ink Wash': 2, 'Ink Wash Night': 2, 'LED Board': 2, 'LED Board Green': 2, 'LED Board Red': 2, 'Risograph': 2, 'Risograph Night': 2, 'Chrome': 14, 'Rave Flyer': 0, 'Sunrise': 14, 'Sunrise Night': 14, 'Contour': 8, 'Spectral Ledger': 6, 'Twin Deck': 6, 'Producer': 3, 'Cassette': 6, 'Cassette Night': 6, 'Holo Card': 12, 'Signal Route': 14, 'Sampler': 8, 'Patchbay': 5, 'Warehouse': 2, 'DORFic': 3, 'Frutiger Aurora': 18, 'Dark Aero': 12 };
 
 // Personal themes kept out of the repository: js/local-themes.js (git-ignored) may define
 // window.QUANTM_LOCAL_THEMES = { presets, styles, radius, families } before this module runs

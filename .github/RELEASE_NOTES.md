@@ -1,5 +1,16 @@
 **🚫 No ads**: no audio ads, banners or promoted tracks. Free and open source.
 
+## What's new in 1.2.5
+
+- **Producer theme.** A new theme that lays Quantm out like a music production program. A waveform toolbar runs along the top with a scope and a spectrum in the top bar, and the visualizer in the player bar is hidden.
+- **Three more themes.** DORFic (a light theme with orange accents), Frutiger Aurora (a deep blue and teal take on the Frutiger Aero look) and Dark Aero (a dark glass theme with cyan accents). Find them in Settings → Appearance.
+- **A visual transition editor.** Open a transition from the queue and edit it on a picture: drag where the old song leaves and the new one starts, and see and shape the fades as curves. Your edits still work with crossfade off.
+- **Transition tab.** During a transition a small tab drops in under the top bar and shows the real fades with a marker moving along them. Turn it off in Settings → Playback → Show transition graph.
+- **Lab DJ.** Three new choices under Settings → Auto mix → Transition style: Lab DJ: Smooth blend, Lab DJ: Drop cut and Lab DJ: Everything. They play transitions based on patterns measured from real DJ sets, picked by the playing song's genre and tempo. The thumbs you give a Lab DJ transition teach it which patterns you like, and Settings → Auto mix shows what it has. Lab DJ is off unless you pick it; Auto mix works exactly as before otherwise.
+- **Discord steps aside for games.** While another app is fullscreen, Quantm clears its Discord status so Discord shows your game, and brings it back about a minute after you leave. Turn it off in Settings → Playback → Hide Discord status while gaming.
+- **Shuffle uses the whole list.** Shuffle now picks from every song in the list you're playing, not just the ones that had loaded so far, including long Likes and playlists.
+- **Less work during transitions.** Quantm does less work during transitions: themes only follow a mix if they use it, Auto mix reads its memory without going back to storage each time, and the queue and your saved session update less often.
+
 ## What's new in 1.2.4
 
 - **Likes work again.** SoundCloud started asking for a "prove you're human" check on likes, and Quantm couldn't get past it. Likes, reposts, follows, comments and playlist changes now go through a hidden SoundCloud page, the same way the website sends them, so they normally just work. If SoundCloud still wants you to prove you're human, a small window opens for the check.

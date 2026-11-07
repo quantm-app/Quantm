@@ -80,3 +80,31 @@ test('style-only pair overrides preserve normal Auto mix timing, while explicit 
   cues.setPair(1, 2, { style: 'auto', out: 0, in: 0, fade: 0 });
   assert.deepEqual(cues.transitionFor(1, 2, 6), { out: 0, in: 0, fade: 0, custom: true, style: 'auto' });
 });
+
+test('a pair stores and returns a normalized volume curve, drops junk, and keeps old pairs unchanged', () => {
+  cues._reset();
+  cues.setPair(1, 2, { out: 100, in: 4, fade: 8, style: 'blend', curve: { dj: 1, center: 0.99 } });
+  assert.deepEqual(cues.getPair(1, 2).curve, { dj: 1, center: 0.85 });
+  assert.deepEqual(cues.transitionFor(1, 2, 0).curve, { dj: 1, center: 0.85 });
+  cues.setPair(1, 2, { out: 100, in: 4, fade: 8, curve: { dj: 0 } });
+  assert.deepEqual(cues.getPair(1, 2).curve, { dj: 0 });
+  for (const junk of [null, undefined, 'x', 7, [], { dj: 'a' }, { center: 0.4 }]) {
+    cues.setPair(1, 2, { out: 100, in: 4, fade: 8, curve: junk });
+    assert.ok(!('curve' in cues.getPair(1, 2)), 'junk dropped: ' + JSON.stringify(junk));
+    assert.ok(!('curve' in cues.transitionFor(1, 2, 0)));
+  }
+  // an old stored pair (no curve) reads exactly as before
+  cues.setPair(3, 4, { out: 150, in: 0, fade: 5 });
+  assert.deepEqual(cues.getPair(3, 4), { out: 150, in: 0, fade: 5 });
+  assert.deepEqual(cues.transitionFor(3, 4, 0), { out: 150, in: 0, fade: 5, custom: true });
+});
+
+test('a pair fade may be as long as 60 seconds and no longer', () => {
+  cues._reset();
+  cues.setPair(1, 2, { fade: 45 });
+  assert.equal(cues.getPair(1, 2).fade, 45);
+  cues.setPair(1, 2, { fade: 90 });
+  assert.equal(cues.getPair(1, 2).fade, 60);
+  cues.setPair(1, 2, { fade: -3 });
+  assert.equal(cues.getPair(1, 2).fade, 0);
+});

@@ -1,0 +1,53 @@
+/* The transition tab (transition-tab.js): a small tab under the top bar while two songs mix.
+   Fixed, so it never moves the page; it takes no pointer events and no focus. It sits below modals (90),
+   menus (100) and toasts (200) but above the page. --tt-top is the top bar's measured bottom edge. */
+.transition-tab {
+  position: fixed; z-index: 80; box-sizing: border-box;
+  top: calc(var(--tt-top, var(--topbar-h, 56px)) + 8px);
+  /* centred over the page content: sidebar navigation and the Side player take their share of the width */
+  left: calc(var(--tt-l, 0px) + (100% - var(--tt-l, 0px) - var(--tt-r, 0px)) / 2);
+  width: 340px; max-width: calc(100vw - var(--tt-l, 0px) - var(--tt-r, 0px) - 24px);
+  min-height: 96px; padding: 8px 12px 8px;
+  display: flex; flex-direction: column; gap: 4px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+  font: 600 12px/1.3 var(--font);
+  pointer-events: none; user-select: none;
+  opacity: 0; transform: translate(-50%, -14px);
+  transition: opacity .2s ease, transform .26s cubic-bezier(.2, .8, .2, 1);
+}
+.transition-tab[hidden] { display: none; }
+.transition-tab.show { opacity: 1; transform: translate(-50%, 0); }
+.transition-tab[data-slide="off"], .transition-tab[data-slide="off"].show { transition: none; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) { .transition-tab { transition: none; transform: translate(-50%, 0); } }
+html[data-perf] .transition-tab, html[data-hidden] .transition-tab { display: none; }
+html[data-nav="sidebar"] .transition-tab { --tt-l: var(--nav-w, 210px); }
+html[data-side-player] .transition-tab { --tt-r: var(--side-w, 0px); }
+
+.tt-song { margin: 0; display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 13px; }
+.tt-from, .tt-to { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 0 1 auto; }
+.tt-from { color: var(--muted); }
+.tt-arrow { flex: none; color: var(--accent); }
+.tt-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.tt-graph { display: block; width: 100%; height: 40px; flex: none; overflow: visible; }
+.tt-curve { fill: none; stroke-width: 3; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+.tt-out { stroke: color-mix(in srgb, var(--text) 62%, var(--surface)); stroke-dasharray: 6 4; }
+.tt-in { stroke: var(--accent); }
+.tt-marker { fill: none; stroke: var(--text); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+
+.tt-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; min-width: 0; font-size: 11px; color: var(--muted); }
+.tt-style { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; letter-spacing: .02em; }
+.tt-left { flex: none; font-variant-numeric: tabular-nums; color: var(--text); }
+
+/* themes: follow how each styles its toasts */
+html[data-style="dorfic"] .transition-tab { background: var(--dorf-ink); color: #ffffff; border: 0; border-left: 4px solid var(--dorf-orange); }
+html[data-style="dorfic"] .transition-tab :is(.tt-from, .tt-foot) { color: #d6dae0; }
+html[data-style="dorfic"] .transition-tab .tt-left { color: #ffffff; }
+html[data-style="dorfic"] .transition-tab .tt-in, html[data-style="dorfic"] .transition-tab .tt-arrow { stroke: var(--dorf-orange); color: var(--dorf-orange); }
+html[data-style="dorfic"] .transition-tab .tt-out { stroke: #ffffff; }
+html[data-style="dorfic"] .transition-tab .tt-marker { stroke: #ffffff; }
+html[data-style="dark-aero"] .transition-tab { background: var(--top-sheen), color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: var(--smoke-blur); border: 1px solid rgba(var(--da-cyan), .35); box-shadow: var(--rim), var(--shadow); }
+html[data-style="producer"] .transition-tab { background: var(--surface); border: var(--pr-edge); box-shadow: 0 8px 24px #0006; }
+html[data-style="producer"] .transition-tab .tt-out { stroke: var(--text); }
+html[data-style="producer"] .transition-tab .tt-in { stroke: var(--pr-green); }

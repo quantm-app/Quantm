@@ -365,32 +365,48 @@ function entryFor(value) {
   };
 }
 
-// The parsed store, reused while the stored text is unchanged (Mix order looks up many songs at once)
-let cachedRaw = null;
-let cachedEntries = null;
+// The parsed store, kept in memory. get() runs from status reads every 250-500 ms, so it must not touch
+// localStorage or copy the store: it reads the shared object below (never handed out) and builds a fresh entry
+// from the one record it needs. Only this module writes the key, so the cache is dropped on every write
+// attempt, when the storage object itself is replaced, and on another window's 'storage' event.
+// Code that edits the key behind this module's back (tests do) calls invalidate().
+let cache = null;
+let cacheOwner;
 
-function read() {
+/** Forget the in-memory copy; the next call reads storage again. */
+export function invalidate() { cache = null; }
+try { globalThis.addEventListener?.('storage', e => { if (!e || e.key == null || e.key === KEY) cache = null; }); } catch { /* no window */ }
+
+function shared() {
   try {
-    const raw = globalThis.localStorage.getItem(KEY);
-    if (raw !== null && raw === cachedRaw && cachedEntries) return Object.assign(Object.create(null), cachedEntries);
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return Object.create(null);
-    const entries = Object.entries(parsed).filter(([id, entry]) => idFor(id) && entryFor(entry));
-    entries.sort((a, b) => (b[1].updated || 0) - (a[1].updated || 0));
-    cachedEntries = Object.assign(Object.create(null), Object.fromEntries(entries.slice(0, LIMIT)));
-    cachedRaw = raw;
-    return Object.assign(Object.create(null), cachedEntries);
-  } catch { return Object.create(null); }
+    const storage = globalThis.localStorage;
+    if (cache && storage === cacheOwner) return cache;
+    cache = null;
+    const parsed = JSON.parse(storage.getItem(KEY));
+    let entries = Object.create(null);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const kept = Object.entries(parsed).filter(([id, entry]) => idFor(id) && entryFor(entry));
+      kept.sort((a, b) => (b[1].updated || 0) - (a[1].updated || 0));
+      entries = Object.assign(Object.create(null), Object.fromEntries(kept.slice(0, LIMIT)));
+    }
+    cache = entries; cacheOwner = storage;
+    return entries;
+  } catch { cache = null; return Object.create(null); }
 }
 
+// A copy the writers may edit (learn / rememberDrop change it and save it back). Writers always read storage afresh:
+// another window may have saved since this one cached, and saving a stale snapshot would delete its songs.
+const read = () => { cache = null; return Object.assign(Object.create(null), shared()); };
+
 function save(entries) {
+  cache = null;
   try { globalThis.localStorage.setItem(KEY, JSON.stringify(entries)); } catch { /* Storage can be disabled or full. */ }
 }
 
 /** Return a compact remembered entry, or null. */
 export function get(trackId, opts = {}) {
   const id = idFor(trackId);
-  const entry = id === null ? null : entryFor(read()[id]);
+  const entry = id === null ? null : entryFor(shared()[id]); // entryFor builds a new object: callers cannot reach the cache
   return entry && validGrid(entry) ? orientGrid(entry, opts) : entry;
 }
 
@@ -466,7 +482,7 @@ export function learn(trackId, summary, opts = {}) {
 }
 
 /** Count remembered songs. */
-export function count() { return Object.keys(read()).length; }
+export function count() { return Object.keys(shared()).length; }
 
 /** Forget all remembered songs. */
 export function reset() { save(Object.create(null)); }

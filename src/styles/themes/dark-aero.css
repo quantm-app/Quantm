@@ -1,0 +1,207 @@
+/* Dark Aero: the premium, night-time branch of the Aero look (about 2006 to 2015).
+   Near-black smoked glass, a diagonal reflection across every panel, gel buttons with a glossy top half,
+   cool cyan glow and a faint blue rim light, over a dark room with a blue bloom and a reflective floor.
+   Active when <html data-style="dark-aero">. Pure CSS gradients: no images, fonts or logos.
+   Colors still come from the theme variables; the cyan/blue below is only for detail. */
+
+html[data-style="dark-aero"] {
+  --font: "Segoe UI", "Frutiger", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-display: var(--font);
+  --da-cyan: 53, 198, 255;
+  --da-blue: 40, 110, 220;
+  --border: rgba(255, 255, 255, .1);
+  --hover: rgba(255, 255, 255, .07);
+  --hover-strong: rgba(255, 255, 255, .13);
+  --surface-2: color-mix(in srgb, var(--surface) 82%, #ffffff);
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  --shadow: 0 16px 44px rgba(0, 0, 0, .65);
+  --smoke-blur: blur(18px) saturate(1.3);
+  --smoke-fill: color-mix(in srgb, var(--surface) 90%, transparent); /* cards: no blur of their own, so a more opaque smoke */
+  --smoke-bar-fill: color-mix(in srgb, var(--bar) 80%, transparent);
+  --streak: linear-gradient(112deg, rgba(255, 255, 255, 0) 0 34%, rgba(255, 255, 255, .055) 34% 49%, rgba(255, 255, 255, 0) 49.4% 100%);
+  --top-sheen: linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, 0) 70px);
+  --rim: 0 0 0 1px rgba(90, 170, 255, .14), inset 0 1px 0 rgba(255, 255, 255, .13);
+  --gel-top: linear-gradient(180deg, rgba(255, 255, 255, .17) 0 50%, rgba(255, 255, 255, .02) 51% 100%);
+  --gel-top-hot: linear-gradient(180deg, rgba(255, 255, 255, .42) 0 50%, rgba(255, 255, 255, .02) 51% 100%);
+  --btn-body: linear-gradient(180deg, #2b323b, #14181e);
+}
+
+/* ---------------------------------------------------------------- the room: blue bloom, a faint sheen, a reflective floor */
+
+html[data-style="dark-aero"] body {
+  background:
+    radial-gradient(ellipse 70% 50% at 50% -8%, rgba(var(--da-blue), .34), transparent 70%),
+    radial-gradient(ellipse 36% 30% at 88% 14%, rgba(var(--da-cyan), .1), transparent 72%),
+    linear-gradient(112deg, rgba(255, 255, 255, 0) 0 32%, rgba(255, 255, 255, .022) 32% 46%, rgba(255, 255, 255, 0) 46.4% 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0) 0 74%, rgba(var(--da-blue), .1) 90%, rgba(130, 200, 255, .17) 100%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 70%, #000000), var(--bg) 60%);
+  background-attachment: fixed;
+}
+html[data-style="dark-aero"] #view { background: transparent; }
+html[data-style="dark-aero"] :focus-visible { outline: 2px solid rgb(var(--da-cyan)); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- headings */
+
+html[data-style="dark-aero"] :is(.page-title, .shelf-title, .section-title, .hero-title, .settings-card-title, .queue-head h2) {
+  font-family: var(--font-display); font-weight: 500; letter-spacing: -.015em; color: var(--text);
+}
+html[data-style="dark-aero"] :is(.page-header, .shelf-head) {
+  padding-bottom: 12px; border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, rgba(var(--da-cyan), .55), rgba(255, 255, 255, .1) 38%, rgba(255, 255, 255, 0)) 1;
+}
+html[data-style="dark-aero"] .hero-eyebrow { color: var(--accent); letter-spacing: .14em; font-weight: 600; }
+
+/* ---------------------------------------------------------------- bars and nav: smoked glass with a lit top edge */
+
+html[data-style="dark-aero"] .topbar,
+html[data-style="dark-aero"][data-bg] .topbar {
+  background: var(--top-sheen), var(--smoke-bar-fill); backdrop-filter: var(--smoke-blur); color: var(--text);
+  border-bottom: 1px solid rgba(255, 255, 255, .1); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 1px 0 rgba(var(--da-cyan), .16), 0 8px 24px rgba(0, 0, 0, .5);
+}
+html[data-style="dark-aero"] .playerbar,
+html[data-style="dark-aero"][data-bg] .playerbar {
+  background: var(--top-sheen), var(--smoke-bar-fill); backdrop-filter: var(--smoke-blur); color: var(--text);
+  border-top: 1px solid rgba(255, 255, 255, .1); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 -1px 0 rgba(var(--da-cyan), .16), 0 -8px 24px rgba(0, 0, 0, .5);
+}
+html[data-style="dark-aero"][data-player="top"] .playerbar { border-top: 0; border-bottom: 1px solid rgba(255, 255, 255, .1); }
+html[data-style="dark-aero"][data-nav="sidebar"] .nav { background: var(--smoke-bar-fill); border-right: 1px solid rgba(255, 255, 255, .1); backdrop-filter: var(--smoke-blur); }
+html[data-style="dark-aero"] .logo { color: var(--accent); filter: drop-shadow(0 0 7px rgba(var(--da-cyan), .6)); }
+html[data-style="dark-aero"] :is(.nav-link, .settings-nav-link, .tab) { border-radius: var(--radius); color: var(--muted); font-weight: 600; }
+html[data-style="dark-aero"] :is(.nav-link, .settings-nav-link, .tab):hover { color: var(--text); background: var(--hover); }
+html[data-style="dark-aero"] :is(.nav-link, .settings-nav-link).active {
+  color: var(--text); background: var(--gel-top), rgba(var(--da-cyan), .14); box-shadow: inset 0 0 0 1px rgba(var(--da-cyan), .35), 0 0 14px rgba(var(--da-cyan), .2);
+}
+html[data-style="dark-aero"] .settings-nav-link.active .icon { color: var(--accent); }
+html[data-style="dark-aero"] .tabs { border-bottom: 1px solid var(--border); }
+html[data-style="dark-aero"] .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+html[data-style="dark-aero"] :is(.search-input, .input, textarea.input, select.input) {
+  background: rgba(0, 0, 0, .45); color: var(--text); border: 1px solid rgba(255, 255, 255, .13); border-radius: var(--radius);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .06);
+}
+html[data-style="dark-aero"] :is(.search-input, .input, textarea.input, select.input):focus {
+  background: rgba(0, 0, 0, .55); border-color: rgba(var(--da-cyan), .8); box-shadow: inset 0 2px 6px rgba(0, 0, 0, .6), 0 0 0 3px rgba(var(--da-cyan), .22), 0 0 16px rgba(var(--da-cyan), .25);
+}
+html[data-style="dark-aero"] :is(.search-input, .input)::placeholder { color: var(--muted); opacity: 1; }
+
+/* ---------------------------------------------------------------- buttons: gel with a glossy top half */
+
+html[data-style="dark-aero"] :is(.btn, .hero .btn, .chip, .tag-pill) {
+  background: var(--gel-top), var(--btn-body); color: var(--text); border: 1px solid rgba(255, 255, 255, .16); border-bottom-color: rgba(0, 0, 0, .7); border-radius: var(--radius); font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 2px 7px rgba(0, 0, 0, .55); transition: box-shadow .18s, border-color .18s;
+}
+html[data-style="dark-aero"] :is(.btn, .hero .btn, .chip):hover {
+  color: var(--text); border-color: rgba(var(--da-cyan), .7); filter: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 0 0 1px rgba(var(--da-cyan), .35), 0 0 16px rgba(var(--da-cyan), .4);
+}
+html[data-style="dark-aero"] :is(.btn, .hero .btn, .chip):active { background: linear-gradient(180deg, #0f1318, #1c2229); box-shadow: inset 0 2px 6px rgba(0, 0, 0, .75); }
+html[data-style="dark-aero"] :is(.btn-primary, .hero .btn-primary, .chip.active),
+html[data-style="dark-aero"] :is(.btn-primary, .hero .btn-primary, .chip.active):hover {
+  background: var(--gel-top-hot), linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #ffffff), color-mix(in srgb, var(--accent) 86%, #0a4a8a));
+  color: var(--accent-text); border-color: rgba(255, 255, 255, .5); border-bottom-color: rgba(0, 40, 80, .8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 0 16px rgba(var(--da-cyan), .45), 0 2px 8px rgba(0, 0, 0, .5);
+}
+html[data-style="dark-aero"] :is(.btn-outline, .btn-ghost, .hero .btn-outline) { background: transparent; box-shadow: none; border-color: rgba(255, 255, 255, .2); }
+html[data-style="dark-aero"] :is(.btn-outline, .btn-ghost, .hero .btn-outline):hover { background: var(--hover-strong); }
+html[data-style="dark-aero"] .btn-danger, html[data-style="dark-aero"] .btn-danger:hover {
+  background: var(--gel-top), linear-gradient(180deg, #c93a35, #8e1f1b); color: #ffffff; border-color: rgba(255, 255, 255, .3);
+}
+html[data-style="dark-aero"] .icon-btn { color: var(--muted); border-radius: var(--radius); }
+html[data-style="dark-aero"] .icon-btn:hover, html[data-style="dark-aero"] .hero .icon-btn:hover { background: var(--hover-strong); color: var(--text); }
+html[data-style="dark-aero"] :is(.icon-btn.active, .hero .icon-btn.active, .pb-queue-btn.active, .pb-mode.active, .pb-like.active) { color: var(--accent); }
+html[data-style="dark-aero"] :is(.play-btn, .card-play, .pb-play) {
+  background: var(--gel-top-hot), linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #ffffff), color-mix(in srgb, var(--accent) 84%, #0a4a8a));
+  color: var(--accent-text); border: 1px solid rgba(255, 255, 255, .55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 0 18px rgba(var(--da-cyan), .5), 0 4px 12px rgba(0, 0, 0, .6);
+}
+html[data-style="dark-aero"] .login-error { background: rgba(150, 30, 26, .6); color: #ffffff; border: 1px solid rgba(255, 255, 255, .25); }
+html[data-style="dark-aero"] .menu-item.danger { color: #ffaaa5; }
+
+/* ---------------------------------------------------------------- smoked glass panels with a reflection streak */
+
+/* Cards, rows and lists get no backdrop blur of their own (there are dozens of them, and each blur repaints on every change behind it):
+   a more opaque smoked fill with the streak and lit rim keeps the look. Only the bars, menus, modals and toasts blur. */
+
+html[data-style="dark-aero"] :is(.card, .feed-card, .settings-card, .track-artist, .login-card, .hero, .track-list, .user-card) {
+  background: var(--streak), var(--top-sheen), var(--smoke-fill); color: var(--text); backdrop-filter: none;
+  border: 1px solid rgba(255, 255, 255, .1); border-radius: var(--radius); box-shadow: var(--rim), 0 10px 28px rgba(0, 0, 0, .55);
+}
+html[data-style="dark-aero"] .card { padding: 12px; transition: transform .22s, box-shadow .22s; }
+html[data-style="dark-aero"] .card:hover { transform: translateY(-2px); background: var(--streak), var(--top-sheen), color-mix(in srgb, var(--surface) 95%, transparent); box-shadow: 0 0 0 1px rgba(var(--da-cyan), .4), inset 0 1px 0 rgba(255, 255, 255, .18), 0 0 20px rgba(var(--da-cyan), .2), 0 14px 32px rgba(0, 0, 0, .6); }
+html[data-style="dark-aero"] .card:focus-within .card-play { opacity: 1; transform: none; }
+html[data-style="dark-aero"] :is(.card-art, .feed-art, .track-art, .hero-art, .pb-art, .queue-art, .atp-art) { border: 1px solid rgba(255, 255, 255, .14); border-radius: calc(var(--radius) * .7); box-shadow: 0 4px 14px rgba(0, 0, 0, .65); }
+html[data-style="dark-aero"] :is(.card-art.round, .hero-art.round) { border-radius: 50%; }
+html[data-style="dark-aero"] .track-list { padding: 6px; }
+html[data-style="dark-aero"] :is(.track-row, .queue-row) { border-radius: calc(var(--radius) * .7); }
+html[data-style="dark-aero"] :is(.track-row, .queue-row):hover { background: var(--hover-strong); }
+html[data-style="dark-aero"] :is(.track-row, .queue-row).current { background: linear-gradient(90deg, rgba(var(--da-cyan), .2), rgba(var(--da-cyan), .04)); box-shadow: inset 3px 0 0 var(--accent); }
+html[data-style="dark-aero"] :is(.track-row.current .track-title, .queue-row.current .queue-title) { color: var(--accent); }
+html[data-style="dark-aero"] .hero-bg { filter: blur(34px) saturate(1.3) brightness(.45); }
+html[data-style="dark-aero"] .hero-bg::after { background: linear-gradient(180deg, rgba(0, 0, 0, .1), rgba(0, 0, 0, .55)); }
+html[data-style="dark-aero"] :is(.hero-inner, .track-hero-wave, .hero .stat) { color: var(--text); }
+html[data-style="dark-aero"] :is(.hero-subtitle, .hero-meta) { opacity: 1; color: var(--muted); }
+
+/* ---------------------------------------------------------------- player: slim glass seek bar, glowing fill, waveform */
+
+html[data-style="dark-aero"] .pb-track { height: 6px; background: rgba(0, 0, 0, .55); border: 1px solid rgba(255, 255, 255, .12); border-radius: 999px; box-shadow: inset 0 1px 3px rgba(0, 0, 0, .8); }
+html[data-style="dark-aero"] .pb-fill,
+html[data-style="dark-aero"] :is(.pb-progress:hover, .pb-progress.dragging, .pb-volume:hover) .pb-fill {
+  background: var(--gel-top-hot), var(--wave-played); border-radius: 999px; box-shadow: 0 0 10px rgba(var(--da-cyan), .6);
+}
+html[data-style="dark-aero"] .pb-knob { background: radial-gradient(circle at 35% 28%, #ffffff 0 20%, #9ddfff 75%); border: 1px solid rgba(255, 255, 255, .7); box-shadow: 0 0 10px rgba(var(--da-cyan), .75), 0 2px 5px rgba(0, 0, 0, .7); }
+html[data-style="dark-aero"] .pb-visualizer { opacity: 1; filter: drop-shadow(0 0 5px rgba(var(--da-cyan), .5)); }
+html[data-style="dark-aero"] .waveform canvas { filter: drop-shadow(0 0 3px rgba(var(--da-cyan), .35)); }
+
+/* ---------------------------------------------------------------- menus, dialogs, toasts */
+
+html[data-style="dark-aero"] :is(.menu, .modal, .queue-panel, .search-suggest, .pb-hovertime, .update-banner) {
+  background: var(--streak), var(--top-sheen), color-mix(in srgb, var(--surface) 88%, transparent); color: var(--text); backdrop-filter: var(--smoke-blur);
+  border: 1px solid rgba(255, 255, 255, .13); border-radius: var(--radius); box-shadow: var(--rim), var(--shadow);
+}
+html[data-style="dark-aero"] .modal-overlay { background: rgba(0, 0, 0, .58); backdrop-filter: blur(6px); }
+html[data-style="dark-aero"] :is(.modal-head, .queue-head) { background: var(--gel-top), rgba(var(--da-cyan), .06); border-bottom: 1px solid var(--border); }
+html[data-style="dark-aero"] :is(.menu-item, .suggest-item, .atp-row) { border-radius: calc(var(--radius) * .6); }
+html[data-style="dark-aero"] :is(.menu-item, .suggest-item, .atp-row):hover { background: var(--hover-strong); color: var(--text); }
+html[data-style="dark-aero"] .menu-item .icon { color: inherit; }
+html[data-style="dark-aero"] .menu-sep { background: var(--border); }
+html[data-style="dark-aero"] .queue-label { color: var(--muted); letter-spacing: .12em; }
+html[data-style="dark-aero"] .atp-track { background: rgba(0, 0, 0, .35); border: 1px solid var(--border); border-radius: var(--radius); }
+html[data-style="dark-aero"] .toast { background: var(--top-sheen), color-mix(in srgb, var(--surface) 92%, transparent); color: var(--text); backdrop-filter: var(--smoke-blur); border: 1px solid rgba(var(--da-cyan), .35); border-radius: var(--radius); box-shadow: var(--rim), var(--shadow); }
+html[data-style="dark-aero"] .toast-error { background: #8e1f1b; color: #ffffff; border-color: rgba(255, 255, 255, .3); }
+
+/* ---------------------------------------------------------------- settings, switches, scrollbars, login */
+
+html[data-style="dark-aero"] .settings-switch-track { background: rgba(0, 0, 0, .55); border: 1px solid rgba(255, 255, 255, .16); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .8); }
+html[data-style="dark-aero"] .settings-switch-knob { background: linear-gradient(180deg, #f2f6fa, #aab6c2); box-shadow: 0 1px 4px rgba(0, 0, 0, .7); }
+html[data-style="dark-aero"] .settings-switch input:checked + .settings-switch-track { background: var(--gel-top-hot), var(--accent); border-color: rgba(255, 255, 255, .5); box-shadow: 0 0 12px rgba(var(--da-cyan), .5); }
+html[data-style="dark-aero"] .settings-switch input:checked + .settings-switch-track .settings-switch-knob { background: linear-gradient(180deg, #ffffff, #c4d2de); }
+html[data-style="dark-aero"] .settings-preset { border: 1px solid rgba(255, 255, 255, .14); border-radius: var(--radius); }
+html[data-style="dark-aero"] .settings-preset.active { border-color: rgb(var(--da-cyan)); box-shadow: 0 0 14px rgba(var(--da-cyan), .45); }
+html[data-style="dark-aero"] :is(.settings-range, .checkbox input) { accent-color: var(--accent); }
+html[data-style="dark-aero"] .settings-warning { background: rgba(255, 190, 80, .14); border-radius: var(--radius); }
+html[data-style="dark-aero"] ::-webkit-scrollbar-track { background: rgba(0, 0, 0, .35); }
+html[data-style="dark-aero"] ::-webkit-scrollbar-thumb { background: var(--gel-top), #3a4450; border: 3px solid transparent; background-clip: padding-box; border-radius: 999px; }
+html[data-style="dark-aero"] ::-webkit-scrollbar-thumb:hover { background-color: rgb(var(--da-cyan)); }
+html[data-style="dark-aero"] .spinner { border-color: rgba(255, 255, 255, .14); border-top-color: var(--accent); }
+html[data-style="dark-aero"] .login { background: transparent; }
+
+/* ---------------------------------------------------------------- motion + performance (static look: only hover fades are gated) */
+
+html[data-style="dark-aero"][data-theme-motion="off"] *,
+html[data-style="dark-aero"][data-theme-motion="off"] *::before,
+html[data-style="dark-aero"][data-theme-motion="off"] *::after,
+html[data-style="dark-aero"][data-hidden] *,
+html[data-style="dark-aero"][data-perf] *,
+html[data-style="dark-aero"][data-perf] *::before,
+html[data-style="dark-aero"][data-perf] *::after { animation: none !important; transition: none !important; }
+/* performance mode: no blur or glow, near-solid panels, a plain dark gradient */
+html[data-style="dark-aero"][data-perf] {
+  --smoke-fill: color-mix(in srgb, var(--surface) 97%, transparent);
+  --smoke-bar-fill: color-mix(in srgb, var(--bar) 98%, transparent);
+}
+html[data-style="dark-aero"][data-perf] * { backdrop-filter: none !important; filter: none !important; }
+html[data-style="dark-aero"][data-perf] body { background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 70%, #000000), var(--bg) 60%); }
+@media (prefers-reduced-motion: reduce) {
+  html[data-style="dark-aero"]:not([data-theme-motion="on"]) *,
+  html[data-style="dark-aero"]:not([data-theme-motion="on"]) *::before,
+  html[data-style="dark-aero"]:not([data-theme-motion="on"]) *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

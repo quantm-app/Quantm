@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "recipes": [
+    {"id": "bass:fast:drop:3", "family": "bass", "tempo": "fast", "kind": "drop", "buildBars": 2, "killStyle": "step", "lowCutHz": 200, "steps": [{"bar": -2, "lowCutHz": 90}, {"bar": -1, "lowCutHz": 200}], "stutter": true, "echo": true, "breathMs": 50, "count": 14},
+    {"id": "bass:fast:blend:1", "family": "bass", "tempo": "fast", "kind": "blend", "overlapBars": 16, "subCutBars": 8, "count": 5},
+    {"id": "bass:mid:drop:1", "family": "bass", "tempo": "mid", "kind": "drop", "buildBars": 4, "killStyle": "sweep", "lowCutHz": 300, "stutter": false, "echo": true, "breathMs": 80, "count": 8},
+    {"id": "bass:mid:blend:2", "family": "bass", "tempo": "mid", "kind": "blend", "overlapBars": 8, "subCutBars": 4, "count": 3},
+    {"id": "dance:mid:blend:1", "family": "dance", "tempo": "mid", "kind": "blend", "overlapBars": 32, "subCutBars": 16, "count": 9},
+    {"id": "hiphop:slow:cut:1", "family": "hiphop", "tempo": "slow", "kind": "cut", "breathMs": 80, "echo": true, "count": 3}
+  ]
+}

@@ -2,7 +2,12 @@
 let activeStop;
 // --beat changes every frame, and a variable on <html> restyles the whole page: only the themes
 // that read it get it (at most 30 times a second). Add a style id here when a theme uses var(--beat).
-const BEAT_STYLES = new Set(['blueprint', 'chrome', 'glitch', 'holo-card', 'rave-flyer', 'risograph', 'vapor-mall']);
+export const BEAT_STYLES = new Set(['blueprint', 'chrome', 'glitch', 'holo-card', 'rave-flyer', 'risograph', 'vapor-mall']);
+// --mix (blend progress) has the same cost, so it is gated the same way: the styles whose CSS reads var(--mix)
+// (sunrise reads it as the sky's fallback). test/automix-css.test.js scans src/styles and fails if one is missing.
+export const MIX_STYLES = new Set(['blueprint', 'chrome', 'risograph', 'sunrise', 'tiling', 'twin-deck']);
+// data-beat flips on <html> every beat; only these read it (ink-wash CSS, the sampler and twin-deck packs' observers)
+export const BEAT_MARK_STYLES = new Set(['ink-wash', 'sampler', 'twin-deck']);
 const BEAT_MS = 1000 / 30;
 const clamp = value => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
 const validGrid = grid => grid && Number.isFinite(grid.period) && grid.period > 0 && Number.isFinite(grid.offset);
@@ -19,6 +24,7 @@ export function startAutoMixCss(player) {
   let sampledAudio;
   let grid;
   let beatAt = -Infinity;
+  let mixAt = -Infinity;
   const off = [];
   const mark = (key, value) => { if (html.dataset[key] !== value) html.dataset[key] = value; };
   // even an unchanged value restyles the whole page when written, so only write changes
@@ -36,6 +42,7 @@ export function startAutoMixCss(player) {
     delete html.dataset.mixPhase;
     if (motion() || !html.dataset.beat) mark('beat', 'a');
     for (const key of ['--mix', '--beat', '--bpm']) setVar(key, '0');
+    mixAt = -Infinity;
   }
 
   function paint(now) {
@@ -64,7 +71,13 @@ export function startAutoMixCss(player) {
     mark('mixStyle', status.mix?.style || status.plan?.style || 'blend');
     if (mixing && status.mix?.phase) mark('mixPhase', status.mix.phase);
     else delete html.dataset.mixPhase;
-    setVar('--mix', String(Math.round(progress * 1000) / 1000));
+    const reads = set => set.has(html.dataset.style) || set.has(html.dataset.baseStyle);
+    if (reads(MIX_STYLES)) {
+      // at most ~30 writes a second, but the ends (0 and 1) always land
+      if (mixAt === -1 || now < mixAt || now - mixAt >= BEAT_MS || progress === 0 || progress === 1) {
+        mixAt = now; setVar('--mix', String(Math.round(progress * 1000) / 1000));
+      }
+    } else if (mixAt !== -1) { mixAt = -1; setVar('--mix', '0'); } // a theme switch mid-fade leaves it clean
     if (mixing && status.mix?.style !== 'dropcut') mark('swap', progress < 0.5 ? 'before' : 'after');
     else delete html.dataset.swap;
     // Match Settings' green threshold; an active controller alone does not mean in phase.
@@ -76,10 +89,10 @@ export function startAutoMixCss(player) {
     mark('tempo', bpm > 0 ? 'known' : 'unknown'); // lets CSS hide a tempo readout when there's none
     const beats = grid && Number.isFinite(player.audio?.currentTime) ?
       (player.audio.currentTime - grid.offset) / grid.period : 0;
-    if (BEAT_STYLES.has(html.dataset.style) || BEAT_STYLES.has(html.dataset.baseStyle)) {
+    if (reads(BEAT_STYLES)) {
       if (beatAt === -1 || now < beatAt || now - beatAt >= BEAT_MS) { beatAt = now; setVar('--beat', String(Math.round((((beats % 1) + 1) % 1) * 1000) / 1000)); }
     } else if (beatAt !== -1) { beatAt = -1; setVar('--beat', '0'); }
-    if (motion()) mark('beat', Math.abs(Math.floor(beats) % 2) === 0 ? 'a' : 'b');
+    if (motion() && reads(BEAT_MARK_STYLES)) mark('beat', Math.abs(Math.floor(beats) % 2) === 0 ? 'a' : 'b');
     else if (!html.dataset.beat) mark('beat', 'a');
   }
 

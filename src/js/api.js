@@ -221,6 +221,66 @@ export const search = (q, kind = '') => new Pager(kind ? 'search/' + kind : 'sea
   if (item.kind === 'track') cacheTrack(item);
   return item;
 });
+export const GENRES = [
+  'Alternative Rock', 'Ambient', 'Classical', 'Country', 'Dance & EDM', 'Dancehall', 'Deep House', 'Disco',
+  'Drum & Bass', 'Dubstep', 'Electronic', 'Folk & Singer-Songwriter', 'Hip-hop & Rap', 'House', 'Indie',
+  'Jazz & Blues', 'Latin', 'Metal', 'Piano', 'Pop', 'R&B & Soul', 'Reggae', 'Reggaeton', 'Rock',
+  'Soundtrack', 'Techno', 'Trance', 'Trap', 'Triphop', 'World'
+];
+/** "Hip-hop & Rap" -> "hip-hop-and-rap" */
+export const genreSlug = (title) => title.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+/**
+ * Every track of a list: re-page it at 200 a page (no rows drawn), dedupe, keep only tracks.
+ * `pick` turns a pager item into its track (reposts are { track } items). Stops after 100 pages.
+ * Throws if a page fails, so callers can fall back to what they have.
+ */
+export async function loadEveryTrack(pager, pick = (item) => item) {
+  const fast = new Pager(pager.resource, Object.assign({}, pager.params, { limit: 200 }), pager.map);
+  fast.afterLoad = pager.afterLoad;
+  const all = [];
+  const seen = new Set();
+  for (let pages = 0; !fast.done && pages < 100; pages++) {
+    for (const item of await fast.next()) {
+      const t = item && pick(item);
+      if (t && t.kind === 'track' && !seen.has(t.id)) { seen.add(t.id); all.push(t); }
+    }
+  }
+  return all;
+}
+
+/** A repost-style item is a track or { track }; playlists have neither */
+export const trackOfEntry = (entry) => entry.kind === 'track' ? entry : entry.track;
+
+/**
+ * Rebuild "load the whole list" for a saved play context from its href, or null when the list isn't
+ * one that can be reloaded. getMe() gives the signed-in user (only Likes needs it).
+ */
+export function loadAllFor(href, getMe) {
+  if (typeof href !== 'string') return null;
+  if (href === '#/library/likes') return async () => loadEveryTrack(myTrackLikes((await getMe()).id));
+  if (href === '#/library/history') return () => loadEveryTrack(myPlayHistory());
+  if (href === '#/trending') return () => loadEveryTrack(trending());
+  let m = /^#\/trending\/([a-z0-9-]+)$/.exec(href);
+  if (m) {
+    const genre = GENRES.find(g => genreSlug(g) === m[1]);
+    return genre ? () => loadEveryTrack(popularByGenre(genre)) : null;
+  }
+  m = /^#\/search\?q=([^&]*)&tab=tracks$/.exec(href);
+  if (m) {
+    let q;
+    try { q = decodeURIComponent(m[1]); } catch (e) { return null; }
+    return q ? () => loadEveryTrack(search(q, 'tracks')) : null;
+  }
+  m = /^#\/user\/(\d+)\/(popular|tracks|reposts)$/.exec(href);
+  if (m) {
+    const id = m[1];
+    if (m[2] === 'popular') return () => loadEveryTrack(userTopTracks(id));
+    if (m[2] === 'tracks') return () => loadEveryTrack(userTracks(id), trackOfEntry);
+    return () => loadEveryTrack(userReposts(id), trackOfEntry);
+  }
+  return null;
+}
 export const searchSuggestions = (q) => get('search/queries', { q, limit: 8 });
 export const resolve = (url) => get('resolve', { url });
 

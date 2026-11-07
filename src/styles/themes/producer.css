@@ -1,0 +1,240 @@
+/* Producer: original CSS panels and SVG automation; system fonts only. */
+html[data-style="producer"] {
+  --font: "Segoe UI", -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+  --pr-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --pr-green: #7fd35a;
+  /* Fixed dark LCD colours shared by the home toolbar and the top-bar output panel. */
+  --pr-lcd-bg: #0f1a1f; --pr-lcd-fg: #c5e6ab;
+  --pr-orange: #f39c3c;
+  --border: color-mix(in srgb, var(--text) 22%, var(--surface));
+  --hover: color-mix(in srgb, var(--surface) 92%, var(--text));
+  --hover-strong: color-mix(in srgb, var(--surface) 85%, var(--text));
+  --pr-edge: 1px solid var(--border);
+}
+html[data-style="producer"] body { background: var(--bg); color: var(--text); }
+html[data-style="producer"] :focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+html[data-style="producer"] #view { background: var(--bg); }
+html[data-style="producer"] :is(.topbar, .playerbar),
+html[data-style="producer"][data-bg] :is(.topbar, .playerbar) {
+  background: var(--bar); color: var(--text); box-shadow: none; backdrop-filter: none;
+}
+html[data-style="producer"] .topbar { border-bottom: var(--pr-edge); }
+html[data-style="producer"] .playerbar { border-top: var(--pr-edge); }
+html[data-style="producer"][data-player="top"] .playerbar { border-top: 0; border-bottom: var(--pr-edge); }
+html[data-style="producer"][data-nav="sidebar"] .nav { background: var(--bar); border-right: var(--pr-edge); }
+html[data-style="producer"] :is(.logo, .page-title, .shelf-title, .hero-title, .section-title) { color: var(--text); letter-spacing: -.025em; }
+html[data-style="producer"] :is(.nav-link, .settings-nav-link, .tab) { color: var(--muted); border-radius: var(--radius); }
+html[data-style="producer"] :is(.nav-link.active, .settings-nav-link.active, .tab.active) { color: var(--accent); background: var(--surface); }
+html[data-style="producer"] :is(.search-input, .input, select, textarea) {
+  background: var(--bg); color: var(--text); border: var(--pr-edge); border-radius: var(--radius);
+}
+html[data-style="producer"] :is(.search-input, .input, textarea)::placeholder { color: var(--muted); opacity: 1; }
+html[data-style="producer"] :is(.btn, .icon-btn, .chip, .tag-pill) {
+  background: var(--surface); color: var(--text); border: var(--pr-edge); border-radius: var(--radius);
+}
+html[data-style="producer"] :is(.btn, .icon-btn, .chip):hover { background: var(--hover); color: var(--text); }
+html[data-style="producer"] :is(.btn-primary, .chip.active, .play-btn, .pb-play, .card-play),
+html[data-style="producer"] :is(.btn-primary, .chip.active):hover { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+html[data-style="producer"] :is(.icon-btn.active, .pb-title, .track-row.current .track-title) { color: var(--accent); }
+html[data-style="producer"] :is(.card, .feed-card, .track-list, .settings-card, .track-artist, .hero, .login-card) {
+  background: var(--surface); border: var(--pr-edge); border-radius: var(--radius); box-shadow: none;
+}
+html[data-style="producer"] .card:hover { border-color: var(--accent); }
+html[data-style="producer"] .card:focus-within .card-play { opacity: 1; transform: none; }
+html[data-style="producer"] :is(.card-art, .track-art, .hero-art, .pb-art, .queue-art) { border-radius: var(--radius); }
+html[data-style="producer"] .hero-bg { display: none; }
+html[data-style="producer"] :is(.hero-inner, .hero .stat) { color: var(--text); }
+html[data-style="producer"] :is(.hero-eyebrow, .hero-subtitle, .hero-meta) { opacity: 1; }
+html[data-style="producer"] :is(.track-row, .queue-row, .queue-transition) { border-bottom: var(--pr-edge); }
+html[data-style="producer"] :is(.track-row, .queue-row):hover { background: var(--hover); }
+html[data-style="producer"] :is(.track-row.current, .queue-row.current) { background: var(--surface); box-shadow: inset 3px 0 var(--accent); }
+html[data-style="producer"] .pb-track { background: var(--wave); }
+html[data-style="producer"] .pb-fill { background: var(--wave-played); }
+html[data-style="producer"] .pb-knob { background: var(--accent); }
+html[data-style="producer"] :is(.queue-panel, .menu, .modal, .search-suggest, .pb-hovertime, .toast) {
+  background: var(--surface); color: var(--text); border: var(--pr-edge); border-radius: var(--radius); box-shadow: 0 8px 24px #0006;
+}
+html[data-style="producer"] :is(.queue-head, .modal-head) { background: var(--bar); border-bottom: var(--pr-edge); }
+html[data-style="producer"] :is(.menu-item, .suggest-item, .atp-row):hover { background: var(--hover); color: var(--text); }
+html[data-style="producer"] :is(.menu-item .icon, .settings-nav-link.active .icon) { color: inherit; }
+html[data-style="producer"] .settings-preset { border-color: var(--border); border-radius: var(--radius); }
+html[data-style="producer"] .settings-preset.active { border-color: var(--accent); }
+html[data-style="producer"] .settings-switch-track { background: var(--wave); border: var(--pr-edge); }
+html[data-style="producer"] .login { background: var(--bg); }
+html[data-style="producer"] ::-webkit-scrollbar-track { background: var(--bg); }
+html[data-style="producer"] ::-webkit-scrollbar-thumb { background: var(--muted); border: 3px solid var(--bg); border-radius: var(--radius); }
+
+html[data-style="producer"] :is(.btn, .icon-btn, .pb-play, .pb-speed, .pr-channel-name, .pr-step) {
+  border-radius: 3px; border: 1px solid #151c22;
+  box-shadow: inset 0 1px #ffffff20, inset 0 -1px #0006, 0 1px #0003;
+}
+html[data-style="producer"] button:active { box-shadow: inset 0 1px 3px #0008; }
+/* Dense DAW-style layout: small type, slate panels with title bars, coloured pattern clips. */
+html[data-style="producer"] .pr-home {
+  max-width: 1500px; margin-inline: auto; font-size: 12px; line-height: 1.4;
+  --pr-lane-h: 38px; --pr-ruler-h: 22px; --pr-pad-on: #ff8f7e;
+  --pr-c0: #b184e8; --pr-c1: #7fd35a; --pr-c2: #5aa7ee; --pr-c3: #f2a34a;
+  --pr-c4: #3fc9b0; --pr-c5: #ee82b4; --pr-c6: #c3d94a; --pr-c7: #e5c35a;
+}
+html[data-style="producer"] .pr-home :is(.pr-header, .pr-actions) { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+html[data-style="producer"] .pr-header { margin: 0 0 8px; }
+html[data-style="producer"] .pr-header h1 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+html[data-style="producer"] .pr-home .btn { font-size: 11px; padding: 4px 10px; }
+html[data-style="producer"] .pr-caption { color: var(--muted); font: 10px/1.5 var(--pr-mono); letter-spacing: .06em; margin: 0; }
+
+/* Top toolbar: song-position and tempo LCDs beside the playing song's waveform. */
+html[data-style="producer"] .pr-toolbar-row { display: flex; align-items: stretch; gap: 10px; min-width: 0; }
+/* The toolbar is a size container: sections wrap or hide by its own width, not the viewport's. */
+html[data-style="producer"] .pr-toolbar {
+  container-type: inline-size; margin-bottom: 8px; padding: 8px;
+  background: linear-gradient(#ffffff0d, transparent 40%), var(--bar); border: var(--pr-edge); border-radius: 4px;
+  box-shadow: inset 0 1px #ffffff18, 0 3px 10px #0002;
+}
+html[data-style="producer"] .pr-toolbar-lcds { display: flex; gap: 8px; flex: none; max-width: 100%; }
+html[data-style="producer"] .pr-toolbar-lcds > div { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 5px 10px; background: var(--pr-lcd-bg); border: 1px solid #0a1013; border-radius: 3px; box-shadow: inset 0 1px 5px #000a, 0 1px #ffffff1c; }
+html[data-style="producer"] .pr-toolbar-lcds .pr-caption { font-size: 8px; color: #a0b8af; }
+html[data-style="producer"] .pr-big-lcd { position: relative; display: block; color: var(--pr-lcd-fg); font: 700 30px/1.1 var(--pr-mono); font-variant-numeric: tabular-nums slashed-zero; letter-spacing: .04em; white-space: pre; text-shadow: 0 0 8px #7fd35a55; }
+/* Unlit "88:88:88" segments behind the digits, like an LCD. */
+html[data-style="producer"] .pr-big-lcd::before { content: attr(data-ghost); position: absolute; inset: 0; color: #c5e6ab12; text-shadow: none; pointer-events: none; }
+html[data-style="producer"] .pr-toolbar-wave { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 4px 6px; background: color-mix(in srgb, var(--bg) 80%, #000); color: var(--text); border: var(--pr-edge); border-radius: 3px; box-shadow: inset 0 1px 4px #0006; }
+html[data-style="producer"] .pr-wave-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+html[data-style="producer"] .pr-toolbar-wave .waveform { flex: none; }
+html[data-style="producer"] .pr-wave-empty { height: 56px; display: grid; place-items: center; color: var(--muted); font: 11px var(--pr-mono); border: 1px dashed var(--border); border-radius: 2px; }
+
+/* Output display in the top bar, before the search field: scope / spectrum canvas (a button) with L / R peak
+   meters. About 185 x 50 px, inside the 56 px bar. Fixed dark LCD colours, like .pr-lcd, so any palette reads. */
+html[data-style="producer"] .pr-output[hidden] { display: none; }
+/* The search field may shrink below its input's automatic minimum, so wide fonts cannot overflow the bar. */
+html[data-style="producer"] .topbar .search { min-width: 0; }
+html[data-style="producer"] .topbar .search-input { min-width: 0; }
+html[data-style="producer"] .pr-output { -webkit-app-region: no-drag; flex: none; display: flex; align-items: center; gap: 5px; padding: 3px; background: var(--pr-lcd-bg, #0f1a1f); border: 1px solid #0a1013; border-radius: 3px; box-shadow: inset 0 1px 5px #000a, 0 1px #ffffff1c; }
+html[data-style="producer"] .pr-output-view { position: relative; display: block; flex: none; width: 118px; height: 44px; padding: 0; background: #0b1519; border: 1px solid #0a1013; border-radius: 2px; box-shadow: inset 0 1px 4px #000a; cursor: pointer; }
+html[data-style="producer"] .pr-output-view:hover { border-color: #3a4f58; }
+html[data-style="producer"] .pr-output-canvas { display: block; width: 116px; height: 42px; }
+html[data-style="producer"] .pr-output-mode { position: absolute; top: 2px; right: 3px; font: 7px/1 var(--pr-mono); letter-spacing: .1em; color: #a0b8af; pointer-events: none; padding: 1px 3px; border-radius: 2px; background: #0b1519e6; }
+html[data-style="producer"] .pr-peaks { display: flex; flex-direction: column; justify-content: center; gap: 8px; flex: none; }
+html[data-style="producer"] .pr-peak { display: flex; align-items: center; gap: 3px; }
+html[data-style="producer"] .pr-peak em { width: 7px; font: normal 8px/1 var(--pr-mono); color: #a0b8af; }
+html[data-style="producer"] .pr-peak-bar { --pr-peak-w: 42px; position: relative; flex: none; box-sizing: border-box; width: 44px; height: 9px; overflow: hidden; background: #172025; border: 1px solid #0a1013; box-shadow: inset 0 1px 2px #000a; }
+html[data-style="producer"] .pr-peak-fill { display: block; width: 0; height: 100%; background: linear-gradient(90deg, #f3e6c4 0, #f3e6c4 55%, #f39c3c 75%, #ee4b3a 100%) 0 0 / var(--pr-peak-w) 100% no-repeat; }
+html[data-style="producer"] .pr-peak-bar::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(90deg, transparent 0 3px, #000a 3px 4px); }
+html[data-style="producer"] .pr-peak-tick { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: #fff; opacity: 0; z-index: 1; }
+@container (max-width: 519px) {
+  html[data-style="producer"] .pr-toolbar-row { flex-wrap: wrap; }
+  html[data-style="producer"] .pr-toolbar-wave { flex-basis: 100%; }
+}
+@container (max-width: 359px) {
+  html[data-style="producer"] .pr-big-lcd { font-size: 22px; }
+  html[data-style="producer"] .pr-toolbar-lcds { flex-wrap: wrap; }
+}
+
+/* Window panels with a title bar. */
+html[data-style="producer"] .pr-panel { margin-bottom: 8px; background: var(--bar); border: var(--pr-edge); border-radius: 4px; box-shadow: inset 0 1px #ffffff15, 0 3px 10px #0002; overflow: hidden; }
+html[data-style="producer"] .pr-titlebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 3px 8px; /* Background and text come from the same palette tokens, so custom light colours stay readable. */
+  background: linear-gradient(#ffffff14, #ffffff05), color-mix(in srgb, var(--bar) 70%, var(--bg)); color: var(--text); border-bottom: var(--pr-edge); box-shadow: inset 0 1px #ffffff18; }
+html[data-style="producer"] .pr-titlebar h2 { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text); white-space: nowrap; }
+html[data-style="producer"] .pr-titlebar .pr-caption { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+html[data-style="producer"] .pr-panel-body { padding: 8px; }
+html[data-style="producer"] .pr-browse:not([hidden]) { max-height: 70vh; overflow: auto; }
+
+/* Playlist: track headers on the left, a ruler and coloured lanes on the right. */
+html[data-style="producer"] .pr-timeline-scroll { overflow: auto; max-height: 420px; background: var(--bg); }
+html[data-style="producer"] .pr-playlist { display: flex; align-items: stretch; width: max-content; min-width: 100%; }
+html[data-style="producer"] .pr-heads { position: sticky; left: 0; z-index: 4; flex: none; width: 148px; background: var(--bar); border-right: 1px solid #12171b; box-shadow: 2px 0 4px #0004; }
+html[data-style="producer"] .pr-heads-corner { position: sticky; top: 0; z-index: 5; height: var(--pr-ruler-h); padding-left: 8px; background: var(--bar); color: var(--muted); font: 9px/var(--pr-ruler-h) var(--pr-mono); letter-spacing: .1em; border-bottom: var(--pr-edge); }
+html[data-style="producer"] .pr-head { display: flex; align-items: stretch; gap: 6px; height: var(--pr-lane-h); border-bottom: var(--pr-edge); background: linear-gradient(#ffffff0c, transparent), var(--bar); font: 10px/1.25 var(--pr-mono); overflow: hidden; }
+html[data-style="producer"] .pr-head[data-current="true"] { background: linear-gradient(#ffffff18, #ffffff08), var(--surface); }
+html[data-style="producer"] .pr-head-swatch { flex: none; width: 8px; background: var(--pr-clip); box-shadow: inset -1px 0 #0004; }
+html[data-style="producer"] .pr-head-text { flex: 1; min-width: 0; align-self: center; padding-right: 6px; }
+html[data-style="producer"] .pr-head-text b { display: block; color: var(--text); font-weight: 600; }
+html[data-style="producer"] .pr-head-text span { display: block; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+html[data-style="producer"] .pr-timeline { position: relative; flex: none; min-width: 640px; background: var(--bg); }
+html[data-style="producer"] .pr-ruler { position: sticky; top: 0; z-index: 2; height: var(--pr-ruler-h); background: var(--bar); color: var(--muted); font: 10px/var(--pr-ruler-h) var(--pr-mono); border-bottom: var(--pr-edge); overflow: hidden; }
+html[data-style="producer"] .pr-ruler span { position: absolute; top: 0; bottom: 0; padding-left: 4px; border-left: 1px solid var(--wave); }
+html[data-style="producer"] .pr-home :is(.pr-lane, .pr-head) { --pr-clip: var(--pr-c0); }
+html[data-style="producer"] .pr-home :is(.pr-lane, .pr-head)[data-colour="1"] { --pr-clip: var(--pr-c1); }
+html[data-style="producer"] .pr-home :is(.pr-lane, .pr-head)[data-colour="2"] { --pr-clip: var(--pr-c2); }
+html[data-style="producer"] .pr-home :is(.pr-lane, .pr-head)[data-colour="3"] { --pr-clip: var(--pr-c3); }
+html[data-style="producer"] .pr-home :is(.pr-lane, .pr-head)[data-colour="4"] { --pr-clip: var(--pr-c4); }
+html[data-style="producer"] .pr-home :is(.pr-lane, .pr-head)[data-colour="5"] { --pr-clip: var(--pr-c5); }
+html[data-style="producer"] .pr-home :is(.pr-lane, .pr-head)[data-colour="6"] { --pr-clip: var(--pr-c6); }
+html[data-style="producer"] .pr-home :is(.pr-lane, .pr-head)[data-colour="7"] { --pr-clip: var(--pr-c7); }
+/* Faint bar lines every labelled bar (--pr-step of --pr-bars), set from the ruler. */
+html[data-style="producer"] .pr-lane {
+  height: var(--pr-lane-h); position: relative; border-bottom: var(--pr-edge);
+  background: linear-gradient(90deg, #ffffff14 0 1px, transparent 1px) 0 0 / calc(100% * var(--pr-step, 1) / var(--pr-bars, 16)) 100% repeat-x;
+}
+html[data-style="producer"] .pr-lane:nth-child(even) { background-color: #ffffff06; }
+html[data-style="producer"] .pr-clip {
+  position: absolute; top: 3px; height: calc(var(--pr-lane-h) - 6px); min-width: 4px; padding: 0; display: flex; flex-direction: column; overflow: hidden; text-align: left;
+  color: #10161a; border: 1px solid color-mix(in srgb, var(--pr-clip) 40%, #000); border-radius: 2px;
+  background: color-mix(in srgb, var(--pr-clip) 36%, #10161a); box-shadow: inset 0 1px #ffffff40;
+}
+html[data-style="producer"] .pr-clip-name { flex: none; display: block; padding: 0 5px; background: var(--pr-clip); color: #10161a; font: 600 10px/13px var(--pr-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html[data-style="producer"] .pr-clip-wave { flex: 1; min-height: 0; width: 100%; display: block; opacity: .8; }
+html[data-style="producer"] .pr-clip:hover { filter: brightness(1.15); }
+html[data-style="producer"] .pr-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #6cff4a; box-shadow: 0 0 4px #6cff4a99; pointer-events: none; z-index: 3; }
+html[data-style="producer"] .pr-playhead::before { content: ''; position: absolute; top: calc(var(--pr-ruler-h) - 9px); left: -4px; border-top: 8px solid #6cff4a; border-inline: 5px solid transparent; }
+
+/* Channel rack: LED, pan/volume knobs, mixer insert, name, then 16 steps. */
+html[data-style="producer"] .pr-rack-rows { overflow: auto; max-height: 380px; }
+html[data-style="producer"] .pr-channel { display: grid; grid-template-columns: 10px auto 24px minmax(120px, 1fr) minmax(320px, 2fr); gap: 8px; align-items: center; min-width: 560px; padding: 4px 8px; border-bottom: var(--pr-edge); }
+html[data-style="producer"] .pr-channel[data-current="true"] { background: #ffffff08; }
+html[data-style="producer"] .pr-led { width: 8px; height: 8px; border-radius: 50%; background: #25331f; border: 1px solid #0a1008; box-shadow: inset 0 1px #0008; }
+html[data-style="producer"] .pr-channel[data-current="true"] .pr-led { background: #7dff55; box-shadow: 0 0 5px #7dff55; }
+html[data-style="producer"] .pr-knobs { display: flex; gap: 5px; }
+html[data-style="producer"] .pr-knob { position: relative; display: block; width: 16px; height: 16px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #8a99a1, #3d4850 70%); border: 1px solid #12171b; box-shadow: 0 1px 2px #0008, inset 0 1px #ffffff30; }
+html[data-style="producer"] .pr-knob::after { content: ''; position: absolute; left: 6px; top: 1px; width: 2px; height: 6px; border-radius: 1px; background: var(--pr-orange); transform: rotate(35deg); transform-origin: 1px 6px; }
+html[data-style="producer"] .pr-knob.pr-pan::after { transform: rotate(-15deg); }
+html[data-style="producer"] .pr-mixer-num { display: block; text-align: center; padding: 2px 0; background: var(--pr-lcd-bg); color: var(--pr-lcd-fg); border: 1px solid #0a1013; border-radius: 2px; font: 10px/1.3 var(--pr-mono); box-shadow: inset 0 1px 3px #0008; }
+html[data-style="producer"] .pr-channel-name { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; padding: 5px 8px; background: var(--surface); color: var(--text); font-size: 11px; }
+html[data-style="producer"] .pr-steps { display: grid; grid-template-columns: repeat(16, 1fr); gap: 3px; }
+html[data-style="producer"] .pr-step { height: 22px; padding: 0; background: #3a454c; position: relative; opacity: 1; cursor: default; }
+html[data-style="producer"] .pr-step:nth-child(8n+5), html[data-style="producer"] .pr-step:nth-child(8n+6), html[data-style="producer"] .pr-step:nth-child(8n+7), html[data-style="producer"] .pr-step:nth-child(8n+8) { background: #5a6860; }
+/* The lit step is the playback position. The glow is decoration and is dropped when motion is off. */
+html[data-style="producer"] .pr-step[data-lit="true"] { background: var(--pr-pad-on); border-color: #ffd2c8; box-shadow: inset 0 1px #fff9, 0 0 8px #ff8f7ecc; }
+html[data-style="producer"][data-theme-motion="off"] .pr-step[data-lit="true"], html[data-style="producer"][data-perf] .pr-step[data-lit="true"] { box-shadow: inset 0 1px #fff9; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-style="producer"]:not([data-theme-motion="on"]) .pr-step[data-lit="true"] { box-shadow: inset 0 1px #fff9; }
+}
+
+html[data-style="producer"] .pr-automation-graph { display: block; width: 100%; height: 100px; background: repeating-linear-gradient(90deg, transparent 0 calc(6.25% - 1px), #ffffff0a calc(6.25% - 1px) 6.25%), var(--bg); border: var(--pr-edge); }
+html[data-style="producer"] .pr-curve { fill: none; stroke: var(--pr-orange); stroke-width: 2; vector-effect: non-scaling-stroke; }
+html[data-style="producer"] :is(.pr-fade-in, .pr-eq-in) { stroke: var(--pr-green); }
+html[data-style="producer"] :is(.pr-eq-in, .pr-eq-out) { stroke-dasharray: 4 5; opacity: .65; }
+html[data-style="producer"] .pr-automation-cursor { fill: none; stroke: var(--text); stroke-width: 1; vector-effect: non-scaling-stroke; }
+html[data-style="producer"] .pr-automation[data-active="false"] .pr-curve { opacity: .2; }
+html[data-style="producer"] :is(.pr-automation-label, .pr-empty) { font: 11px/1.7 var(--pr-mono); color: var(--muted); padding: 9px 0; overflow-wrap: anywhere; }
+html[data-style="producer"] .pb-controls { flex-wrap: wrap; gap: 6px; }
+html[data-style="producer"] .pb-play { background: var(--pr-orange); color: #20170d; width: 32px; height: 30px; }
+html[data-style="producer"] .pr-transport-extra { display: flex; align-items: center; gap: 7px; }
+html[data-style="producer"] .pr-record { width: 12px; height: 12px; border-radius: 50%; background: #b7766e; box-shadow: 0 0 0 4px #0003, inset 0 1px #ffffff40; margin: 5px; }
+html[data-style="producer"] .pr-song-pattern { display: grid; font: 8px/12px var(--pr-mono); color: var(--muted); border: var(--pr-edge); padding: 2px 5px; border-radius: 3px; }
+html[data-style="producer"] .pr-song-pattern b { color: var(--pr-green); }
+html[data-style="producer"] .pr-lcd { display: grid; grid-template-columns: auto auto; gap: 1px 10px; padding: 3px 7px; background: #101e24; border: 1px solid #101519; box-shadow: inset 0 1px 4px #0008, 0 1px #ffffff20; border-radius: 3px; }
+html[data-style="producer"] .pr-lcd .pr-caption { font-size: 7px; color: #a0b8af; }
+html[data-style="producer"] :is(.pr-tempo, .pr-position) { color: #c5e6ab; font: 13px/1.2 var(--pr-mono); font-variant-numeric: tabular-nums slashed-zero; letter-spacing: .02em; grid-row: 2; }
+html[data-style="producer"] .pb-volume { position: relative; margin-right: 20px; }
+html[data-style="producer"] .pb-volume .pb-track { background: #172027; border: 1px solid #0008; height: 5px; overflow: visible; }
+html[data-style="producer"] .pb-volume::after { content: ''; pointer-events: none; position: absolute; left: calc(var(--pr-volume, 1) * (100% - 10px)); top: calc(50% - 8px); width: 10px; height: 16px; border: 1px solid #172027; border-radius: 2px; background: linear-gradient(#75838a 42%, #bec5c7 42% 55%, #75838a 55%); box-shadow: inset 0 1px #ffffff50, 0 2px 3px #0008; }
+html[data-style="producer"] .pr-meter { position: absolute; left: calc(100% + 5px); top: calc(50% - 14px); width: 11px; height: 28px; display: flex; align-items: flex-end; gap: 2px; background: #142018; border: 1px solid #101810; pointer-events: none; }
+html[data-style="producer"] .pr-meter i { width: 4px; height: 0; background: repeating-linear-gradient(0deg, var(--pr-green) 0 3px, #1e3625 3px 4px); }
+html[data-style="producer"] :is(.side-main, .side-details) { background: var(--bar); }
+html[data-style="producer"][data-theme-motion="off"] *, html[data-style="producer"][data-perf] *, html[data-style="producer"][data-hidden] * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-style="producer"]:not([data-theme-motion="on"]) * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@media (max-width: 1100px) {
+  html[data-style="producer"] .pr-transport-extra { flex-basis: 100%; justify-content: center; }
+  html[data-style="producer"] .pb-center { gap: 2px; }
+}
+@media (forced-colors: active) {
+  html[data-style="producer"] :is(.pr-clip, .pr-step, .pr-lcd) { border: 1px solid CanvasText; }
+  html[data-style="producer"] .pr-step[data-lit="true"] { outline: 2px solid Highlight; }
+}
+/* Extra transport row has space at compact widths; the native seek row stays reachable. */
+html[data-style="producer"]:not([data-side-player]) { --player-h: 112px; }
+html[data-style="producer"] .pb-controls { justify-content: center; }
+html[data-style="producer"] .playerbar.side .pb-controls { gap: 6px; }
+html[data-style="producer"] .pr-clip[aria-current="true"] { outline: 2px solid var(--pr-orange); outline-offset: 1px; z-index: 1; }
+html[data-style="producer"] .pr-record { flex: none; padding: 0; opacity: 1; cursor: default; }

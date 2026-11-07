@@ -77,6 +77,11 @@ function profileHero(user, playContext) {
   // "Play" starts their popular tracks (or latest uploads when they have none)
   let queue = null;
   let fetching = false;
+  // with shuffle on, Play picks from every upload, not just the first page
+  let uploads = null;
+  const shuffleContext = Object.assign({}, playContext, {
+    loadAll: () => uploads || (uploads = api.loadEveryTrack(api.userTracks(user.id)).catch((error) => { uploads = null; throw error; }))
+  });
   const play = async () => {
     if (player.context && player.context.href === playContext.href && player.current) return player.toggle();
     if (fetching) return; // a second click while the songs are still loading
@@ -93,6 +98,7 @@ function profileHero(user, playContext) {
       }
     }
     if (!queue.length) return toast(`${user.username} has no tracks to play`);
+    if (player.shuffle) return player.shufflePlay(queue, shuffleContext);
     player.playList(queue, 0, playContext);
   };
 
@@ -263,7 +269,30 @@ function trackFeed(pager, { context, empty }) {
   const tracks = [];  // every track so far, in order: the play queue
   const items = [];   // stream items matching `tracks` (null for plain tracks)
 
-  const loadMore = async () => {
+  // the play context can load the whole list, so shuffle covers all of it, not just what was scrolled through
+  let everything = null;
+  const loaded = () => [...new Map(tracks.map(t => [t.id, t])).values()]; // a track can be reposted twice
+  const loadAll = async () => {
+    if (pager.done) return loaded();
+    if (everything) return everything;
+    try {
+      everything = await api.loadEveryTrack(pager, api.trackOfEntry);
+      return everything;
+    } catch (e) {
+      while (!pager.done) await loadMore();
+      return loaded();
+    }
+  };
+  context = Object.assign({}, context, { loadAll });
+
+  let loading = null;
+  const loadMore = () => {
+    // one page at a time, even when scrolling and loadAll overlap
+    if (!loading) loading = loadPage().finally(() => { loading = null; });
+    return loading;
+  };
+
+  const loadPage = async () => {
     if (pager.done) return;
     try {
       const batch = await pager.next();

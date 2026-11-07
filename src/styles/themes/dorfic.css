@@ -1,0 +1,225 @@
+/* DORFic: Daylight, Orange, Red, Futurism, graphic. A sunlit corporate-tech look from the late 2000s:
+   stark white and silver surfaces, one vivid orange, thin rule lines, chevrons, a faint hex lattice and a sun glow.
+   Active when <html data-style="dorfic">. Pure CSS and inline SVG: no images, fonts or logos.
+   Colors still come from the theme variables; the extra accents below are only for detail. */
+
+html[data-style="dorfic"] {
+  --font: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-display: var(--font);
+  --dorf-orange: #ff7a00;
+  --dorf-yellow: #ffc21a;
+  --dorf-red: #e5342b;
+  --dorf-orange-text: #a84300;          /* the accent as text on white: 5.5:1 */
+  --dorf-silver: #c4c9d0;
+  --dorf-ink: #17191c;
+  --dorf-wash: #fff3e6;                 /* faint orange tint for hover and current rows */
+  --border: color-mix(in srgb, var(--text) 16%, var(--surface));
+  --hover: var(--dorf-wash);
+  --hover-strong: #ffe6cc;
+  --surface-2: #f4f5f7;
+  --accent-soft: var(--dorf-wash);
+  --shadow: 0 8px 28px rgba(23, 25, 28, .16);
+  --dorf-gloss: linear-gradient(180deg, #ffffff 0%, #ffffff 48%, #eceef1 52%, #e1e4e8 100%);
+  --dorf-hot: linear-gradient(180deg, #ffab52 0%, #ff8f1f 48%, #ff7a00 52%, #f26a00 100%);
+  --dorf-press: linear-gradient(180deg, #f26a00 0%, #ff7a00 100%);
+  --dorf-rim: 1px solid #b4bac2;
+  --dorf-lift: 0 1px 2px rgba(23, 25, 28, .08), 0 4px 12px rgba(23, 25, 28, .06);
+  --dorf-hex: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50L0 16L28 0L56 16L56 50L28 66L28 100' fill='none' stroke='%238d95a0' stroke-opacity='.22'/%3E%3Cpath d='M28 0L28 34L0 50L0 84L28 100L56 84L56 50L28 34' fill='none' stroke='%238d95a0' stroke-opacity='.22'/%3E%3C/svg%3E");
+}
+
+/* ---------------------------------------------------------------- page: hex lattice + a sun in the corner */
+
+html[data-style="dorfic"] body {
+  background:
+    radial-gradient(circle 760px at 100% 0%, rgba(255, 194, 26, .5) 0%, rgba(255, 138, 0, .28) 34%, rgba(255, 122, 0, 0) 70%),
+    var(--dorf-hex) 0 0 / 56px 100px,
+    linear-gradient(180deg, #fbfbfc 0%, var(--bg) 100%);
+  background-attachment: fixed;
+}
+html[data-style="dorfic"] #view { background: transparent; }
+html[data-style="dorfic"] :focus-visible { outline: 2px solid var(--dorf-ink); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- headings: a short orange rule and a chevron */
+
+html[data-style="dorfic"] :is(.page-title, .shelf-title, .section-title, .hero-title, .settings-card-title, .queue-head h2) {
+  font-family: var(--font-display); font-weight: 600; letter-spacing: -.01em; color: var(--text);
+}
+html[data-style="dorfic"] :is(.page-title, .shelf-title)::before {
+  content: "\00BB"; color: var(--dorf-orange); font-weight: 800; margin-right: .32em;
+}
+html[data-style="dorfic"] :is(.page-header, .shelf-head) {
+  padding-bottom: 12px;
+  background:
+    linear-gradient(var(--dorf-orange), var(--dorf-orange)) left bottom / 64px 3px no-repeat,
+    linear-gradient(var(--dorf-silver), var(--dorf-silver)) left bottom / 100% 1px no-repeat;
+}
+html[data-style="dorfic"] .hero-eyebrow { color: var(--dorf-orange-text); letter-spacing: .14em; font-weight: 700; text-transform: uppercase; }
+
+/* ---------------------------------------------------------------- bars: white with a thin orange rule */
+
+html[data-style="dorfic"] .topbar,
+html[data-style="dorfic"][data-bg] .topbar {
+  background: linear-gradient(180deg, #ffffff, color-mix(in srgb, var(--bar) 92%, #cfd3d9)); color: var(--text);
+  border-bottom: 1px solid var(--dorf-silver); box-shadow: 0 1px 0 var(--dorf-orange), 0 6px 18px rgba(23, 25, 28, .07);
+}
+html[data-style="dorfic"] .playerbar,
+html[data-style="dorfic"][data-bg] .playerbar {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bar) 92%, #cfd3d9), #ffffff); color: var(--text);
+  border-top: 1px solid var(--dorf-silver); box-shadow: 0 -1px 0 var(--dorf-orange), 0 -6px 18px rgba(23, 25, 28, .07);
+}
+html[data-style="dorfic"][data-player="top"] .playerbar { border-top: 0; border-bottom: 1px solid var(--dorf-silver); box-shadow: 0 1px 0 var(--dorf-orange), 0 6px 18px rgba(23, 25, 28, .07); }
+html[data-style="dorfic"][data-nav="sidebar"] .nav { background: var(--bar); border-right: 1px solid var(--dorf-silver); backdrop-filter: none; }
+html[data-style="dorfic"] .logo { color: var(--dorf-orange); filter: none; }
+html[data-style="dorfic"] :is(.nav-link, .settings-nav-link, .tab) { border-radius: var(--radius); color: var(--muted); font-weight: 600; }
+html[data-style="dorfic"] :is(.nav-link, .settings-nav-link, .tab):hover { color: var(--text); background: var(--dorf-wash); }
+html[data-style="dorfic"] :is(.nav-link, .settings-nav-link).active { color: var(--text); background: var(--dorf-wash); box-shadow: inset 0 -2px 0 var(--dorf-orange); }
+html[data-style="dorfic"][data-nav="sidebar"] .nav-link.active { box-shadow: inset 3px 0 0 var(--dorf-orange); }
+html[data-style="dorfic"] .settings-nav-link.active .icon { color: var(--dorf-orange-text); }
+html[data-style="dorfic"] .tabs { border-bottom: 1px solid var(--dorf-silver); }
+html[data-style="dorfic"] .tab { border-radius: var(--radius) var(--radius) 0 0; }
+html[data-style="dorfic"] .tab.active { color: var(--text); border-bottom: 3px solid var(--dorf-orange); background: transparent; }
+
+html[data-style="dorfic"] :is(.search-input, .input, textarea.input, select.input) {
+  background: #ffffff; color: var(--text); border: var(--dorf-rim); border-radius: var(--radius); box-shadow: inset 0 1px 2px rgba(23, 25, 28, .1);
+}
+html[data-style="dorfic"] :is(.search-input, .input, textarea.input, select.input):focus {
+  background: #ffffff; border-color: var(--dorf-orange); box-shadow: inset 0 1px 2px rgba(23, 25, 28, .08), 0 0 0 3px rgba(255, 122, 0, .28);
+}
+html[data-style="dorfic"] :is(.search-input, .input)::placeholder { color: var(--muted); opacity: 1; }
+
+/* ---------------------------------------------------------------- buttons: glossy white, orange when touched */
+
+html[data-style="dorfic"] :is(.btn, .hero .btn, .chip, .tag-pill) {
+  background: var(--dorf-gloss); color: var(--dorf-ink); border: var(--dorf-rim); border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 #ffffff, 0 1px 2px rgba(23, 25, 28, .12); font-weight: 600; transition: background .12s, border-color .12s, box-shadow .12s;
+}
+html[data-style="dorfic"] :is(.btn, .hero .btn, .chip):hover {
+  background: var(--dorf-hot); color: var(--dorf-ink); border-color: #d96500; filter: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), 0 2px 8px rgba(255, 122, 0, .35);
+}
+html[data-style="dorfic"] :is(.btn, .hero .btn, .chip):active { background: var(--dorf-press); box-shadow: inset 0 2px 4px rgba(120, 50, 0, .35); }
+html[data-style="dorfic"] :is(.btn-primary, .hero .btn-primary, .chip.active),
+html[data-style="dorfic"] :is(.btn-primary, .hero .btn-primary, .chip.active):hover {
+  background: var(--dorf-hot); color: var(--accent-text); border-color: #d96500; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), 0 2px 8px rgba(255, 122, 0, .35);
+}
+html[data-style="dorfic"] :is(.btn-primary, .hero .btn-primary):active { background: var(--dorf-press); }
+html[data-style="dorfic"] :is(.btn-outline, .btn-ghost, .hero .btn-outline) { background: transparent; box-shadow: none; color: var(--text); }
+html[data-style="dorfic"] :is(.btn-outline, .btn-ghost, .hero .btn-outline):hover { background: var(--dorf-hot); color: var(--dorf-ink); }
+html[data-style="dorfic"] .btn-danger, html[data-style="dorfic"] .btn-danger:hover {
+  background: linear-gradient(180deg, #ef5a50, #c62828 52%, #b71f1f); color: #ffffff; border-color: #8f1a1a;
+}
+html[data-style="dorfic"] .icon-btn { color: var(--muted); border-radius: var(--radius); }
+html[data-style="dorfic"] .icon-btn:hover, html[data-style="dorfic"] .hero .icon-btn:hover { background: var(--dorf-wash); color: var(--dorf-ink); }
+html[data-style="dorfic"] :is(.icon-btn.active, .hero .icon-btn.active, .pb-queue-btn.active, .pb-mode.active, .pb-like.active) { color: var(--dorf-orange-text); }
+html[data-style="dorfic"] .pb-mode.active::after { background: var(--dorf-orange); }
+html[data-style="dorfic"] :is(.play-btn, .card-play, .pb-play) {
+  background: radial-gradient(ellipse 70% 45% at 50% 14%, rgba(255, 255, 255, .6), transparent 70%), linear-gradient(180deg, #ff9a3c, #ff7a00 55%, #f06400);
+  color: var(--accent-text); border: 1px solid #d96500; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 3px 10px rgba(255, 122, 0, .4);
+}
+html[data-style="dorfic"] :is(.play-btn, .card-play, .pb-play):hover { filter: brightness(1.06); }
+html[data-style="dorfic"] .menu-item.danger { color: #b3261e; }
+html[data-style="dorfic"] .login-error { background: #fdecea; color: #8f1a1a; border: 1px solid #f1b5b0; }
+
+/* ---------------------------------------------------------------- cards, lists, hero */
+
+html[data-style="dorfic"] :is(.card, .feed-card, .settings-card, .track-artist, .login-card, .hero, .track-list, .user-card) {
+  background: #ffffff; color: var(--text); border: 1px solid var(--dorf-silver); border-radius: var(--radius); box-shadow: var(--dorf-lift); backdrop-filter: none;
+}
+html[data-style="dorfic"] :is(.settings-card, .track-list, .login-card, .feed-card) { border-top: 2px solid var(--dorf-orange); }
+html[data-style="dorfic"] .card { padding: 12px; transition: border-color .15s, box-shadow .15s; }
+html[data-style="dorfic"] .card:hover { background: #ffffff; border-color: var(--dorf-orange); box-shadow: 0 1px 2px rgba(23, 25, 28, .08), 0 8px 22px rgba(255, 122, 0, .18); }
+html[data-style="dorfic"] .card:focus-within .card-play { opacity: 1; transform: none; }
+html[data-style="dorfic"] :is(.card-art, .feed-art, .track-art, .hero-art, .pb-art, .queue-art, .atp-art) { border: 1px solid var(--dorf-silver); border-radius: var(--radius); box-shadow: none; }
+html[data-style="dorfic"] :is(.card-art.round, .hero-art.round) { border-radius: 50%; }
+html[data-style="dorfic"] :is(.card-title, .track-title, .feed-title) { color: var(--text); }
+html[data-style="dorfic"] .track-list { padding: 4px; }
+html[data-style="dorfic"] :is(.track-row, .queue-row) { border-radius: var(--radius); border-bottom: 1px solid #e4e7eb; }
+html[data-style="dorfic"] :is(.track-row, .queue-row):hover { background: var(--dorf-wash); }
+html[data-style="dorfic"] :is(.track-row, .queue-row).current { background: var(--dorf-wash); box-shadow: inset 3px 0 0 var(--dorf-orange); }
+html[data-style="dorfic"] :is(.track-row.current .track-title, .queue-row.current .queue-title) { color: var(--dorf-orange-text); }
+html[data-style="dorfic"] .hero-bg { display: none; }
+html[data-style="dorfic"] .hero { background: linear-gradient(135deg, #ffffff 55%, #fff4e6); }
+html[data-style="dorfic"] :is(.hero-inner, .track-hero-wave, .hero .stat) { color: var(--text); }
+html[data-style="dorfic"] :is(.hero-subtitle, .hero-meta) { opacity: 1; color: var(--muted); }
+html[data-style="dorfic"] .tag-pill { color: var(--text); }
+html[data-style="dorfic"] .track-reason { color: var(--muted); }
+
+/* ---------------------------------------------------------------- player: seek bar, knob, waveform */
+
+html[data-style="dorfic"] .pb-track { height: 5px; background: var(--wave); border-radius: var(--radius); box-shadow: inset 0 1px 1px rgba(23, 25, 28, .18); }
+html[data-style="dorfic"] .pb-fill,
+html[data-style="dorfic"] :is(.pb-progress:hover, .pb-progress.dragging, .pb-volume:hover) .pb-fill {
+  background: linear-gradient(90deg, var(--wave-played), var(--dorf-yellow)); border-radius: var(--radius);
+}
+html[data-style="dorfic"] .pb-knob { background: #ffffff; border: 2px solid var(--dorf-orange); box-shadow: 0 1px 3px rgba(23, 25, 28, .35); }
+html[data-style="dorfic"] .pb-visualizer { opacity: 1; filter: none; }
+html[data-style="dorfic"] .waveform { border-bottom: 1px solid var(--dorf-silver); }
+html[data-style="dorfic"] .pb-title { color: var(--text); font-weight: 600; }
+
+/* ---------------------------------------------------------------- menus, dialogs, toasts */
+
+html[data-style="dorfic"] :is(.menu, .modal, .queue-panel, .search-suggest, .pb-hovertime, .update-banner) {
+  background: #ffffff; color: var(--text); border: 1px solid var(--dorf-silver); border-top: 2px solid var(--dorf-orange); border-radius: var(--radius); box-shadow: var(--shadow); backdrop-filter: none;
+}
+html[data-style="dorfic"] .pb-hovertime { border-top-width: 1px; }
+html[data-style="dorfic"] .modal-overlay { background: rgba(23, 25, 28, .38); backdrop-filter: none; }
+html[data-style="dorfic"] :is(.modal-head, .queue-head) { background: linear-gradient(180deg, #ffffff, #f1f3f5); border-bottom: 1px solid var(--dorf-silver); }
+html[data-style="dorfic"] :is(.menu-item, .suggest-item, .atp-row):hover { background: var(--dorf-wash); color: var(--text); }
+html[data-style="dorfic"] .menu-item .icon { color: inherit; }
+html[data-style="dorfic"] .menu-sep { background: var(--dorf-silver); }
+html[data-style="dorfic"] .queue-label { color: var(--muted); letter-spacing: .12em; }
+html[data-style="dorfic"] .atp-track { background: #f4f5f7; border: 1px solid var(--dorf-silver); border-radius: var(--radius); }
+html[data-style="dorfic"] .toast { background: var(--dorf-ink); color: #ffffff; border: 0; border-left: 4px solid var(--dorf-orange); border-radius: var(--radius); box-shadow: var(--shadow); }
+html[data-style="dorfic"] .toast-error { background: #b3261e; border-left-color: #ffc21a; color: #ffffff; }
+
+/* ---------------------------------------------------------------- settings, switches, scrollbars, login */
+
+html[data-style="dorfic"] .settings-switch-track { background: var(--wave); border: 1px solid #a9b0b9; box-shadow: inset 0 1px 2px rgba(23, 25, 28, .2); }
+html[data-style="dorfic"] .settings-switch-knob { background: #ffffff; box-shadow: 0 1px 3px rgba(23, 25, 28, .4); }
+html[data-style="dorfic"] .settings-switch input:checked + .settings-switch-track { background: var(--dorf-orange); border-color: #d96500; }
+html[data-style="dorfic"] .settings-switch input:checked + .settings-switch-track .settings-switch-knob { background: #ffffff; }
+html[data-style="dorfic"] .settings-switch input:focus-visible + .settings-switch-track { outline-color: var(--dorf-ink); }
+html[data-style="dorfic"] .settings-preset { border: 1px solid var(--dorf-silver); border-radius: var(--radius); }
+html[data-style="dorfic"] .settings-preset.active { border-color: var(--dorf-orange); box-shadow: 0 0 0 2px rgba(255, 122, 0, .35); }
+html[data-style="dorfic"] .settings-row { border-bottom-color: #e4e7eb; }
+html[data-style="dorfic"] :is(.settings-range, .checkbox input) { accent-color: var(--dorf-orange); }
+html[data-style="dorfic"] .settings-warning { background: #fff3e6; border-left: 3px solid var(--dorf-orange); color: var(--text); }
+html[data-style="dorfic"] ::-webkit-scrollbar-track { background: #eceef1; }
+html[data-style="dorfic"] ::-webkit-scrollbar-thumb { background: var(--dorf-silver); border: 3px solid #eceef1; border-radius: var(--radius); }
+html[data-style="dorfic"] ::-webkit-scrollbar-thumb:hover { background: var(--dorf-orange); }
+html[data-style="dorfic"] .spinner { border-color: var(--dorf-silver); border-top-color: var(--dorf-orange); }
+html[data-style="dorfic"] .login { background: transparent; }
+html[data-style="dorfic"] .skeleton { background: linear-gradient(90deg, #e9ebee, #f6f7f8, #e9ebee); }
+
+/* ---------------------------------------------------------------- the accent as text or a thin icon: the darker orange (5.5:1 on white) */
+
+html[data-style="dorfic"] :is(
+  .download-btn.downloaded, .hero .download-btn.downloaded, .icon-btn.active, .hero .icon-btn.active, .track-row.current .track-title, .queue-row.current .queue-title,
+  .queue-transition.custom, .queue-transition.blend-ok, .card-title .icon, .user-row-name .icon, .comment-time, .description a, .pb-add:hover, .pb-mixrate-btn:hover,
+  .pb-mixrate-btn:focus-visible, .pb-mode.active, .pb-queue-btn.active, .pb-speed.active, .pb-eq.active, .pb-sleep.active, .track-open-sc, .playerbar.side .side-mix-name,
+  .library-section-title .icon, .search-toptitle .icon, .settings-nav-link.active .icon, .settings-preset-name .icon, .settings-pv-link, .settings-pv-link:hover,
+  .settings-account-meta .link, .settings-note .icon, .automix-row.good .automix-value, .stats-tile-value .icon, .stats-badge-date, .track-artist-name .icon,
+  .trending-list .track-row:nth-child(-n+3) .track-num, .user-verified, .user-ext:hover, .tab.active .icon, .login-logo, .wave-marker, .settings-about-logo
+) { color: var(--dorf-orange-text); }
+html[data-style="dorfic"] .pb-speed.active { background: var(--dorf-wash); }
+html[data-style="dorfic"] .track-open-sc:hover { color: var(--dorf-ink); }
+
+/* ---------------------------------------------------------------- motion + performance (the look is static; only fades are gated) */
+
+html[data-style="dorfic"][data-theme-motion="off"] *,
+html[data-style="dorfic"][data-theme-motion="off"] *::before,
+html[data-style="dorfic"][data-theme-motion="off"] *::after,
+html[data-style="dorfic"][data-hidden] *,
+html[data-style="dorfic"][data-perf] *,
+html[data-style="dorfic"][data-perf] *::before,
+html[data-style="dorfic"][data-perf] *::after { animation: none !important; transition: none !important; }
+html[data-style="dorfic"][data-perf] * { backdrop-filter: none !important; }
+html[data-style="dorfic"][data-perf] body { background: linear-gradient(180deg, #fbfbfc, var(--bg)); }
+@media (prefers-reduced-motion: reduce) {
+  html[data-style="dorfic"]:not([data-theme-motion="on"]) *,
+  html[data-style="dorfic"]:not([data-theme-motion="on"]) *::before,
+  html[data-style="dorfic"]:not([data-theme-motion="on"]) *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@media (forced-colors: active) {
+  html[data-style="dorfic"] :is(.page-title, .shelf-title)::before { color: CanvasText; }
+}
