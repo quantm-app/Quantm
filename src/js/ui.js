@@ -125,6 +125,8 @@ async function downloadAction(track) {
     } else if (_api?.isDownloadable?.(track)) {
       const result = await offline.download(track);
       toast(result.ok ? `Downloaded ${track.title}` : result.error, result.ok ? 'info' : 'error');
+    } else if (_api?.isProtected?.(track)) {
+      toast("Label songs can't be saved for offline", 'error');
     }
   } catch (error) {
     toast(error.message || 'Download failed', 'error');

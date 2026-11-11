@@ -6,6 +6,7 @@ import { icon } from './icons.js';
 import { store } from './store.js';
 import { player } from './player.js';
 import { offline } from './offline.js';
+import { probeDrm, retryDrmProbe } from './drm.js';
 import { applyTheme } from './theme.js';
 import { initAppearance } from './appearance.js';
 import { initThemeRuntime } from './theme-runtime.js';
@@ -56,7 +57,9 @@ const app = document.getElementById('app');
 
 async function boot() {
   lab.reload(); // Lab DJ recipes (bundled with the app)
-  const { loggedIn } = await window.native.auth.status();
+  // can this Electron play Widevine (label) streams? Answered before any track list or session renders
+  const [{ loggedIn }] = await Promise.all([window.native.auth.status(), probeDrm()]);
+  retryDrmProbe(); // the Widevine module may still be installing on a first launch; keep trying in the background
   if (!loggedIn) return showLogin();
   try {
     await store.init();

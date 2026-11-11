@@ -17,7 +17,8 @@ offline.registerScheme();
 
 const API = 'https://api-v2.soundcloud.com/';
 const LOGIN_PARTITION = 'persist:soundcloud-login';
-const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+// the Chrome version must be the engine's real one: a user agent that disagrees with the browser looks like a bot
+const CHROME_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`;
 const TITLEBAR_HEIGHT = 56;
 
 // Development: QUANTM_PROFILE=<folder> runs a second copy with its own settings and login,
@@ -1120,6 +1121,26 @@ handle('app:metrics', () => {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+/**
+ * castlabs Electron only: wait for the Widevine module, which plays SoundCloud's copy-protected
+ * (label) streams. Stock Electron has no `components` and skips this. The wait is bounded so a
+ * slow or failed download of the module never holds up the window.
+ */
+function widevineReady(limitMs = 8000) {
+  const { components } = require('electron');
+  if (!components) return Promise.resolve(false);
+  return Promise.race([
+    components.whenReady().then(() => true, () => false),
+    new Promise(resolve => setTimeout(() => resolve(false), limitMs))
+  ]);
+}
+
+/** The one way a main window gets created: start-up and macOS `activate` both wait for Widevine, then check again */
+async function openMainWindow() {
+  await widevineReady();
+  if (!mainWindow || mainWindow.isDestroyed()) createMainWindow();
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -1137,14 +1158,14 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     nativeTheme.themeSource = 'dark';
     crashlog.sessionStarted();
     registerNotificationIdentity();
     auth = loadAuth();
     clearStaleDatadome();
     offline.handleScheme();
-    createMainWindow();
+    await openMainWindow();
     updates.init({
       notify: (state) => mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('update:status', state),
       getPref: (key) => loadWindowPrefs()[key],
@@ -1172,6 +1193,6 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('activate', () => {
-    if (!mainWindow) createMainWindow();
+    if (!mainWindow) openMainWindow();
   });
 }

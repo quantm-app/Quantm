@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalize, versionWords, score, pick, queryFor } from '../src/js/song-match.js';
+import { setDrmReady } from '../src/js/drm.js';
+import { describe as describeCopy, normalize, versionWords, score, pick, queryFor } from '../src/js/song-match.js';
 
 const wanted = { title: 'Blinding Lights', artists: 'The Weeknd', durationMs: 200000 };
 const sc = (title, username, duration = 200000, extra = {}) =>
@@ -121,4 +122,18 @@ test('a copy-protected or preview-only SoundCloud upload of the right song is re
   assert.deepEqual([pick(wanted, { soundcloud: [protectedCopy] }).locked, pick(wanted, { soundcloud: [preview] }).locked], [true, true]);
   assert.equal(pick(wanted, { soundcloud: [other] }).locked, false);
   assert.equal(pick(wanted, { soundcloud: [] }).status, 'unmatched');
+});
+
+test('the copy-protected rule follows Widevine readiness, like api.isProtected()', () => {
+  const copy = { title: 'Song', duration: 200000, full_duration: 200000, media: { transcodings: [{ snipped: false, format: { protocol: 'ctr-encrypted-hls' } }] } };
+  try {
+    setDrmReady(false);
+    assert.equal(describeCopy(copy).reject, 'protected');
+    setDrmReady(true);
+    assert.equal(describeCopy(copy).reject, null);
+    const fairplay = { ...copy, media: { transcodings: [{ snipped: false, format: { protocol: 'cbc-encrypted-hls' } }] } };
+    assert.equal(describeCopy(fairplay).reject, 'protected');
+  } finally {
+    setDrmReady(false);
+  }
 });

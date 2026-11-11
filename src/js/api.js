@@ -1,3 +1,5 @@
+import { canPlayProtocol, WIDEVINE_PROTOCOL, WIDEVINE_LICENSE_URL } from './drm.js';
+
 // SoundCloud api-v2 client. Requests are proxied by the main process (window.native.api),
 // which adds the OAuth token and client_id.
 
@@ -288,10 +290,10 @@ export const resolve = (url) => get('resolve', { url });
 // Playback: SoundCloud serves HLS (AAC preferred, MP3 fallback)
 // ---------------------------------------------------------------------------
 
-// Some label tracks only come as DRM-encrypted HLS (cbc-/ctr-encrypted-hls), which needs a
-// Widevine/FairPlay module that Quantm's Electron doesn't have
-const PLAYABLE = new Set(['progressive', 'hls']);
-const playable = (t) => PLAYABLE.has(t.format && t.format.protocol);
+// Some label tracks only come as DRM-encrypted HLS. ctr-encrypted-hls (Widevine) plays when this Electron
+// has the Widevine module (drm.js probes it at start-up); cbc-encrypted-hls (FairPlay) never does.
+// Without the module those tracks stay "protected", exactly as before.
+const playable = (t) => canPlayProtocol(t.format && t.format.protocol);
 
 /** The artist turned on SoundCloud's download button and downloads are left */
 export function isDownloadable(track) {
@@ -311,7 +313,7 @@ function rank(transcoding) {
   return 2;
 }
 
-/** Resolve a playable url. Returns { url, protocol, snipped } */
+/** Resolve a playable url. Returns { url, protocol, snipped, track, drm? } (drm: the license url and token for a Widevine stream) */
 export async function streamFor(trackOrId) {
   const id = typeof trackOrId === 'object' ? trackOrId.id : trackOrId;
   // always refetch: track_authorization expires
@@ -320,14 +322,22 @@ export async function streamFor(trackOrId) {
   if (isProtected(fresh)) throw new ApiError(403, 'protected');
   const all = ((fresh.media && fresh.media.transcodings) || []).filter(playable);
   const full = all.filter(t => !t.snipped);
-  const candidates = (full.length ? full : all).slice().sort((a, b) => rank(a) - rank(b));
+  // plain streams always go before the Widevine one
+  const wide = (t) => t.format.protocol === WIDEVINE_PROTOCOL;
+  const candidates = (full.length ? full : all).slice().sort((a, b) => (wide(a) - wide(b)) || (rank(a) - rank(b)));
   if (!candidates.length) throw new ApiError(403, 'This track is not available for streaming');
 
   let lastError;
   for (const transcoding of candidates) {
     try {
       const data = await get(transcoding.url, { track_authorization: fresh.track_authorization });
-      return { url: data.url, protocol: transcoding.format.protocol, snipped: !!transcoding.snipped, track: fresh };
+      const protocol = transcoding.format.protocol;
+      const stream = { url: data.url, protocol, snipped: !!transcoding.snipped, track: fresh };
+      if (protocol === WIDEVINE_PROTOCOL) {
+        if (typeof data.licenseAuthToken !== 'string' || !data.licenseAuthToken) throw new ApiError(403, 'no license');
+        stream.drm = { licenseUrl: WIDEVINE_LICENSE_URL, token: data.licenseAuthToken };
+      }
+      return stream;
     } catch (error) {
       lastError = error;
     }

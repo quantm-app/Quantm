@@ -20,6 +20,7 @@ import { phaseError, inspectDrop, tempoOptions, orientGrid } from './beats.js';
 import { planStyle, futureWindow, rollSchedule, dropPhase, confident } from './dropcut.js';
 import * as lab from './lab.js';
 import { genreTransition, mellowHint, doubleDropPlan, quickCutOptions, QUICK_CUT_BEATS, FILTER_MAX_SECONDS } from './transitions.js';
+import { licenseXhrSetup } from './drm.js';
 import { isExternal, isAudius, isBandcamp, sourceLabel, audiusStreamUrl } from './sources.js';
 
 /** The name of a transition style as the feed and the thumbs messages say it (learning keys: blend, dropcut and the genre styles) */
@@ -465,8 +466,9 @@ class Player extends Emitter {
     if (this.index < this.queue.length - 1) setTimeout(() => loadId === this.loadId && this.next(true), 800);
   }
 
-  /** `copy` is the upload actually playing: the queue entry's own, or one of its backups (they have their own ids) */
-  attach(stream, autoplay = true, startAt = 0, deck = this.deck, track = this.current, copy = track) {
+  /** `copy` is the upload actually playing: the queue entry's own, or one of its backups (they have their own ids).
+   *  licenseTries counts the Widevine license retries of this attach chain (a new song starts at 0). */
+  attach(stream, autoplay = true, startAt = 0, deck = this.deck, track = this.current, copy = track, licenseTries = 0) {
     const sourceId = deck.sourceId = (deck.sourceId || 0) + 1;
     if (deck.metadataSeek) deck.audio.removeEventListener('loadedmetadata', deck.metadataSeek);
     deck.metadataSeek = null;
@@ -478,6 +480,7 @@ class Player extends Emitter {
     deck.track = track;
     deck.copy = copy;
     deck.snipped = !!stream.snipped;
+    deck.drm = !!stream.drm;
     this.applySpeed(audio);
     if (startAt > 0) {
       deck.metadataSeek = () => {
@@ -488,8 +491,15 @@ class Player extends Emitter {
       audio.addEventListener('loadedmetadata', deck.metadataSeek, { once: true });
     }
 
-    if (stream.protocol === 'hls' && window.Hls && window.Hls.isSupported()) {
-      const hls = new window.Hls({ maxBufferLength: 30, enableWorker: true });
+    if ((stream.protocol === 'hls' || stream.drm) && window.Hls && window.Hls.isSupported()) {
+      const options = { maxBufferLength: 30, enableWorker: true };
+      if (stream.drm) {
+        // the browser's own Widevine module through EME, with SoundCloud's license server
+        options.emeEnabled = true;
+        options.drmSystems = { 'com.widevine.alpha': { licenseUrl: stream.drm.licenseUrl } };
+        options.licenseXhrSetup = licenseXhrSetup(stream.drm.token);
+      }
+      const hls = new window.Hls(options);
       deck.hls = hls;
       hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
         if (deck.sourceId === sourceId && autoplay) audio.play().catch(() => {});
@@ -501,9 +511,18 @@ class Player extends Emitter {
         else if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
           // signed urls expire: re-resolve and resume where we were
           api.streamFor(copy).then((fresh) => {
-            if (deck.sourceId !== sourceId || deck.track !== track) return;
-            this.attach(fresh, this.deckInUse(deck) && !audio.paused, audio.currentTime, deck, track, copy);
+            if (!this.stillWanted(deck, track, sourceId)) return;
+            this.attach(fresh, this.deckInUse(deck) && !audio.paused, audio.currentTime, deck, track, copy, licenseTries);
           }).catch(() => toast('Playback stopped: network error', 'error'));
+        } else if (data.type === window.Hls.ErrorTypes.KEY_SYSTEM_ERROR) {
+          // an expired or refused license: fetch a fresh token and try again, twice at most
+          if (licenseTries >= 2) return this.licenseFailed(deck, track, sourceId);
+          api.streamFor(copy).then((fresh) => {
+            if (!this.stillWanted(deck, track, sourceId)) return;
+            this.attach(fresh, this.deckInUse(deck) && !audio.paused, audio.currentTime, deck, track, copy, licenseTries + 1);
+          }).catch(() => {
+            if (this.stillWanted(deck, track, sourceId)) this.licenseFailed(deck, track, sourceId);
+          });
         }
       });
       hls.loadSource(stream.url);
@@ -511,6 +530,41 @@ class Player extends Emitter {
     } else {
       audio.src = stream.url;
       if (autoplay) audio.play().catch(() => {});
+    }
+  }
+
+  /**
+   * Whether a stream refresh started for this deck's song is still wanted when it comes back. A deck keeps its
+   * old track and sourceId until the next song attaches, so those alone can't tell that the listener moved on:
+   * the active deck must still be on the current song, any other deck must still be the prepared next song's
+   * (or part of the running crossfade).
+   */
+  stillWanted(deck, track, sourceId) {
+    if (deck.sourceId !== sourceId || deck.track !== track) return false;
+    if (deck === this.deck) return this.current === track;
+    const pre = this.prepared?.preroll;
+    return (pre?.deck === deck && this.prepared.track === track) || this.fading?.incoming === deck || this.fading?.outgoing === deck;
+  }
+
+  /** SoundCloud wouldn't license a protected song: say so and leave the player in the state a failed load does */
+  licenseFailed(deck, track, sourceId) {
+    if (deck.sourceId !== sourceId || deck.track !== track) return;
+    toast(`Can't play "${track.title}": SoundCloud didn't grant a license for this song`, 'error');
+    if (deck === this.deck && track === this.current) {
+      const loadId = this.loadId;
+      this.releaseDeck(deck);
+      this.loading = false;
+      this.emit('buffering', false);
+      // like failLoad: skip on unless it is the last song
+      if (this.index < this.queue.length - 1) setTimeout(() => loadId === this.loadId && this.next(true), 800);
+      return;
+    }
+    // a pre-rolled next song: forget its stream so the crossfade doesn't start on a dead deck, and the normal load path handles it
+    const prep = this.prepared;
+    if (prep?.track === track && prep.preroll?.deck === deck && this.fading?.incoming !== deck) {
+      this.dropPreroll(prep);
+      prep.stream = null;
+      prep.failed = true;
     }
   }
 

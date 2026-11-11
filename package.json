@@ -18,6 +18,12 @@
   "build": {
     "appId": "app.quantm.desktop",
     "productName": "Quantm",
+    "electronVersion": "45.2.1+wvcus",
+    "electronDownload": {
+      "mirror": "https://github.com/castlabs/electron-releases/releases/download/v"
+    },
+    "afterPack": "./scripts/vmp-after-pack.js",
+    "afterSign": "./scripts/vmp-after-sign.js",
     "files": [
       "main.js",
       "preload.js",
@@ -89,7 +95,7 @@
     }
   },
   "devDependencies": {
-    "electron": "^33.2.1",
+    "electron": "github:castlabs/electron-releases#v45.2.1+wvcus",
     "electron-builder": "^25.1.8",
     "eslint": "9.17.0",
     "globals": "15.14.0"

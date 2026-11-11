@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { setDrmReady } from '../src/js/drm.js';
 import { installBrowser } from './helpers/browser.js';
 import { Pager, ApiError, isPromoted, isProtected, idOf, streamFor, cacheTrack, tracksByIds } from '../src/js/api.js';
 
@@ -150,4 +151,41 @@ test('DRM-only tracks are detected and streamFor refuses them before requesting 
   });
   await assert.rejects(streamFor({ id: 9 }), (error) => error instanceof ApiError && error.data === 'protected');
   assert.deepEqual(calls, ['tracks/9']);
+});
+
+test('Widevine tracks: still protected without drm; with drm streamFor returns the license, plain streams win, a missing token fails the candidate', async t => {
+  const enc = (protocol, url = 'https://api/' + protocol) => ({ url, format: { protocol, mime_type: 'audio/mp4' } });
+  const label = { id: 11, track_authorization: 'auth', media: { transcodings: [enc('cbc-encrypted-hls'), enc('ctr-encrypted-hls')] } };
+  const reply = (extra) => async ({ resource }) => resource === 'tracks/11' ? ok(label) : ok({ url: 'https://cdn/m3u8', ...extra });
+  try {
+    setDrmReady(false);
+    t.mock.method(window.native, 'api', reply({ licenseAuthToken: 'tok' }));
+    assert.equal(isProtected(label), true);
+    await assert.rejects(streamFor(11), (error) => error.data === 'protected');
+
+    setDrmReady(true);
+    assert.equal(isProtected(label), false);
+    const stream = await streamFor(11);
+    assert.deepEqual(stream.drm, { licenseUrl: 'https://license.media-streaming.soundcloud.cloud/playback/widevine', token: 'tok' });
+    assert.equal(stream.protocol, 'ctr-encrypted-hls');
+    assert.equal(stream.url, 'https://cdn/m3u8');
+
+    t.mock.method(window.native, 'api', reply({}));
+    await assert.rejects(streamFor(11), (error) => error instanceof ApiError);
+    t.mock.method(window.native, 'api', reply({ licenseAuthToken: '' }));
+    await assert.rejects(streamFor(11), (error) => error instanceof ApiError);
+
+    const both = { ...label, media: { transcodings: [enc('ctr-encrypted-hls'), enc('hls')] } };
+    const requested = [];
+    t.mock.method(window.native, 'api', async ({ resource }) => {
+      requested.push(resource);
+      return resource === 'tracks/11' ? ok(both) : ok({ url: 'https://cdn/plain', licenseAuthToken: 'tok' });
+    });
+    const plain = await streamFor(11);
+    assert.equal(plain.protocol, 'hls');
+    assert.equal(plain.drm, undefined);
+    assert.deepEqual(requested, ['tracks/11', 'https://api/hls']);
+  } finally {
+    setDrmReady(false);
+  }
 });

@@ -3,6 +3,8 @@
 // SoundCloud copies always win over Audius, and Audius over Bandcamp, however well they score;
 // the score only ranks copies from the same site. wanted: { title, artists: 'A, B', durationMs }.
 
+import { canPlayProtocol } from './drm.js';
+
 // Words that mean "a different recording": a copy that has one the Spotify song doesn't is rejected
 const VERSION_RE = /\b(remix|rmx|edit|bootleg|live|acoustic|sped up|speed up|slowed|nightcore|reverb|cover|instrumental|mashup|flip|vip|karaoke|8d)\b/g;
 const CANONICAL = { rmx: 'remix', 'speed up': 'sped up' };
@@ -120,7 +122,7 @@ export function describe(raw, source = 'soundcloud', wantedMs = 0) {
   if (raw?.policy === 'SNIP' || raw?.policy === 'BLOCK' || raw?.streamable === false) out.reject = 'unavailable';
   else if (transcodings.length && transcodings.every(t => t?.snipped)) out.reject = 'preview';
   // the same rule api.isProtected() applies: no stream Quantm can play
-  else if (transcodings.length && !transcodings.some(t => t?.format?.protocol === 'progressive' || t?.format?.protocol === 'hls')) out.reject = 'protected';
+  else if (transcodings.length && !transcodings.some(t => canPlayProtocol(t?.format?.protocol))) out.reject = 'protected';
   // SoundCloud's own previews report a short `duration` next to the song's real `full_duration`
   else if (preview && positive(raw?.full_duration) && raw.full_duration > preview + 5000) out.reject = 'preview';
   else if (preview && preview <= PREVIEW_SECONDS * 1000 && wantedMs > (PREVIEW_SECONDS + 15) * 1000) out.reject = 'preview';
