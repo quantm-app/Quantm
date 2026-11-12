@@ -1,5 +1,15 @@
 **🚫 No ads**: no audio ads, banners or promoted tracks. Free and open source.
 
+## What's new in 1.2.6
+
+- **Label songs now play.** Most major-label songs on SoundCloud are copy-protected, and Quantm used to lock them. Quantm now plays them at full length, the same way SoundCloud's website does (Widevine). They work with the EQ, the volume normalizer and Auto mix.
+  - Songs that are Go+ only still play as 30-second previews unless your SoundCloud account has Go+.
+  - Label songs can't be saved for offline listening.
+  - On Linux, label songs may not play yet. This is untested.
+- **A much newer engine.** Quantm now runs on Electron 45, up from 33. That brings three years of security and performance updates.
+- **Playlist import fix.** Playlist import now identifies itself with the current browser version.
+- **First launch after updating.** On Windows and macOS, the first launch after updating may take a few seconds longer while the playback module installs.
+
 ## What's new in 1.2.5
 
 - **Producer theme.** A new theme that lays Quantm out like a music production program. A waveform toolbar runs along the top with a scope and a spectrum in the top bar, and the visualizer in the player bar is hidden.
