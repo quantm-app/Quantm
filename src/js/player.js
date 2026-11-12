@@ -552,6 +552,17 @@ class Player extends Emitter {
     toast(`Can't play "${track.title}": SoundCloud didn't grant a license for this song`, 'error');
     if (deck === this.deck && track === this.current) {
       const loadId = this.loadId;
+      // the song was fading in (it is already the current one): end the fade now so the outgoing deck is stopped and
+      // every gain is restored, instead of fading out onto a dead deck; the skip below then moves past this song
+      if (this.fading?.incoming === deck) {
+        this.clearMixOutcome();
+        this.cutFade();
+        // the fade's end turned the beat lock into a tempo glide on this dead deck, and a fading-in song is being
+        // listened to and beat-watched; drop all three before the deck is unloaded
+        this.stopLock();
+        this.stopListening(deck.audio);
+        this.beats.unwatch(deck.audio);
+      }
       this.releaseDeck(deck);
       this.loading = false;
       this.emit('buffering', false);

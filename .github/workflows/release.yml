@@ -6,6 +6,10 @@ name: Release
 # Windows code signing (free, SignPath Foundation) switches on once the repository has the
 # variable SIGNPATH_ORGANIZATION_ID and the secret SIGNPATH_API_TOKEN. Until then Windows
 # builds are unsigned, as before. See CODE_SIGNING.md.
+#
+# Playback of SoundCloud's copy-protected label songs needs a castlabs "VMP signature" on every
+# Windows and macOS build. It comes from a free castlabs EVS account: the repository must have the
+# secrets EVS_ACCOUNT_NAME and EVS_PASSWD (that account's name and password).
 on:
   push:
     tags:
@@ -24,7 +28,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -48,16 +52,39 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      # macOS builds get the castlabs playback signature (made before Apple code signing). Linux needs none.
+      - name: Set up Python (castlabs signature)
+        if: runner.os == 'macOS'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the castlabs signing tool
+        if: runner.os == 'macOS'
+        run: python -m pip install --upgrade castlabs-evs
+
+      - name: Check the castlabs sign-in
+        if: runner.os == 'macOS'
+        run: python -m castlabs_evs.account reauth
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+          EVS_NO_ASK: '1'
+
       - name: Build and publish
         run: npx electron-builder --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+          EVS_NO_ASK: '1'
+          QUANTM_PYTHON: python
 
       - name: Generate and upload installer checksums
         shell: bash
@@ -97,21 +124,47 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      # castlabs playback signature: the unsigned path signs inside electron-builder (afterSign hook),
+      # the signed path signs the SignPath output below
+      - name: Set up Python (castlabs signature)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the castlabs signing tool
+        run: python -m pip install --upgrade castlabs-evs
+
+      - name: Check the castlabs sign-in
+        run: python -m castlabs_evs.account reauth
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+          EVS_NO_ASK: '1'
+
       # --- unsigned (no SignPath set up yet) ---
       - name: Build and publish (unsigned)
         if: env.SIGNING != 'true'
         run: npx electron-builder --win --publish always
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+          EVS_NO_ASK: '1'
+          QUANTM_PYTHON: python
 
       # --- signed: 1) sign the app files, 2) build installers from them, 3) sign the installers ---
       - name: Build the app folder
         if: env.SIGNING == 'true'
         run: npx electron-builder --win --dir --publish never
+        env:
+          # SignPath changes Quantm.exe afterwards, which would invalidate a castlabs signature made now,
+          # and castlabs requires the signature after code signing on Windows. It is added below instead.
+          QUANTM_SKIP_VMP: '1'
 
       - name: Upload the unsigned app for signing
         if: env.SIGNING == 'true'
@@ -135,12 +188,28 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed-app
 
+      - name: Add the playback signature (castlabs)
+        if: env.SIGNING == 'true'
+        run: |
+          python -m castlabs_evs.vmp sign-pkg signed-app
+          python -m castlabs_evs.vmp verify-pkg signed-app
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+          EVS_NO_ASK: '1'
+
       - name: Build the installers from the signed app
         if: env.SIGNING == 'true'
         shell: bash
         run: |
           rm -rf dist
           npx electron-builder --win nsis portable --prepackaged signed-app --publish never
+          # fail the job if building the installers changed the signed exe
+          python -m castlabs_evs.vmp verify-pkg signed-app
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+          EVS_NO_ASK: '1'
 
       - name: Upload the unsigned installers for signing
         if: env.SIGNING == 'true'

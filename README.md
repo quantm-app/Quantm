@@ -42,7 +42,7 @@ A sleek, themeable SoundCloud desktop client for Windows, macOS and Linux.
 - **Artist profiles.** Popular tracks, tracks, albums, playlists, reposts, likes, followers and following, plus the artist's bio. Start a station of the artist's sound in one click.
 - **Track pages.** Full waveform, timed comments (post and delete your own), related tracks, and who liked or reposted. Click the cover art to see it at its original size.
 - **Quantm playlists.** Playlists saved on this computer with instant adds and removes, drag to reorder, and JSON export/import to move them between computers. Copy any SoundCloud playlist into Quantm with one click. Not synced to SoundCloud.
-- **Import from Spotify.** In Library → Quantm, paste the link to a public Spotify playlist (its first 100 songs) and Quantm saves it as a Quantm playlist. It can't play from Spotify: it finds each song on SoundCloud first, then Audius, then Bandcamp (Bandcamp ones only open on Bandcamp). Some SoundCloud copies are 30-second previews or copy-protected, and those are listed instead of added.
+- **Import from Spotify.** In Library → Quantm, paste the link to a public Spotify playlist (its first 100 songs) and Quantm saves it as a Quantm playlist. It can't play from Spotify: it finds each song on SoundCloud first, then Audius, then Bandcamp (Bandcamp ones only open on Bandcamp). Some SoundCloud copies are 30-second previews, or copy-protected songs this computer can't play, and those are listed instead of added.
 - **Playlist editing.** Create, rename, make private or public, delete, drag to reorder, and remove tracks.
 - **Stations.** Start a station based on any track or artist.
 - **Notifications.** Likes, reposts, comments and new followers.
@@ -132,7 +132,7 @@ If the sign-in window doesn't work for you, choose **Enter a token manually** on
 
 ## Build from source
 
-You'll need [Node.js](https://nodejs.org/) 18 or newer (Node 20 is what the release builds use).
+You'll need [Node.js](https://nodejs.org/) 22.12 or newer (Node 22 is what the release builds use).
 
 ```bash
 npm install        # install dependencies
@@ -149,6 +149,8 @@ npm run dist:linux   # Linux AppImage and .deb
 ```
 
 Output goes to the `dist/` folder.
+
+Builds for Windows and macOS add a castlabs playback signature while packaging. It needs Python 3, `pip install castlabs-evs` and a free castlabs EVS account ([how to sign up](https://github.com/castlabs/electron-releases/wiki/EVS)). Without it the build stops with a message. To build without the signature, set `QUANTM_SKIP_VMP=1`: label songs will not play in that build, and everything else works. `npm start` runs an unsigned development engine, so label songs do not play there either.
 
 ## Project structure
 
@@ -177,7 +179,11 @@ src/
 
 ## Limitations
 
-- **Some label songs can't play in Quantm.** A number of major-label songs on SoundCloud are copy-protected (DRM) and only play in SoundCloud's official app and website. Quantm can't play them, even if you pay for SoundCloud Go. They're marked with a lock icon, are skipped in the queue, and have an **Open in SoundCloud** button so you can play them there.
+- **Label songs.** Quantm plays SoundCloud's copy-protected label songs, using the same Widevine playback as SoundCloud's website. A few limits apply:
+  - Songs that are Go+ only still play as 30-second previews unless your SoundCloud account has Go+.
+  - Label songs can't be saved for offline listening.
+  - On Linux they may not play. The Linux Widevine module has no signature that SoundCloud's license server can check, and this is untested.
+  - If a label song can't play, it is marked with a lock icon, skipped in the queue, and has an **Open in SoundCloud** button so you can play it there.
 
 ## Code signing
 
@@ -197,7 +203,7 @@ The Hextech theme is fan-made and inspired by League of Legends. It is not endor
 
 - The original **Soundnode** was created by Michael Lancaster and contributors. This project is a fork and rewrite of [soundnode-app](https://github.com/Soundnode/soundnode-app).
 - [hls.js](https://github.com/video-dev/hls.js) by Dailymotion, licensed under Apache-2.0, plays HLS streams.
-- Built on [Electron](https://www.electronjs.org/).
+- Built on [Electron](https://www.electronjs.org/), using castlabs' [Electron for Content Security](https://github.com/castlabs/electron-releases) build.
 
 ## Contributing
 

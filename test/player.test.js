@@ -189,6 +189,67 @@ describe('player Widevine streams', () => {
     } finally { cleanup(); }
   });
 
+  // Run a license failure on the deck that is fading in, with the REAL cutFade/finishFade/releaseDeck.
+  // Only the audio-graph and beat-watcher calls are recorded instead of run (there is no audio context here).
+  const failWhileFadingIn = async (t, { style, last }) => {
+    mockApi(t);
+    const next = t.mock.method(player, 'next', () => {});
+    const fades = [];
+    t.mock.method(player.normalizer, 'setFade', (audio, value) => { fades.push([audio, value]); });
+    for (const name of ['clearDropCut', 'clearEchoOut', 'clearLowpass', 'holdBass', 'holdLowpass']) t.mock.method(player.normalizer, name, () => {});
+    const unwatched = [];
+    t.mock.method(player.beats, 'unwatch', (audio) => { unwatched.push(audio); });
+    t.mock.method(player.beats, 'isWatching', () => false);
+    t.mock.method(player.beats, 'since', () => []);
+    player.queue = last ? [labelTrack(31), labelTrack(32)] : [labelTrack(31), labelTrack(32), labelTrack(33)];
+    player.index = 1; // the failed song is already current while it fades in
+    const incoming = player.deck;
+    const outgoing = player.decks[1 - player.active];
+    const track = player.queue[1];
+    const outgoingHls = { destroy() { this.destroyed = true; } };
+    outgoing.hls = outgoingHls;
+    outgoing.track = player.queue[0];
+    player.attach(await streamOf(track), true, 0, incoming, track, track, 2);
+    // a beat lock on the incoming deck and a song-memory listener on it, as a real blend would have
+    const stops = [];
+    player.lock = { incoming: incoming.audio, stop: () => stops.push('stop'), release: () => {} };
+    player.listening.set(incoming.audio, { trackId: track.id, track, keys: { duration: 1 }, vocals: {}, after: -Infinity, duration: 100, listener: { summary: () => null } });
+    player.fading = { from: player.queue[0], to: track, outgoing, incoming, style, progress: 0, startedAt: null };
+    player.loading = true;
+    const shown = () => document.getElementById('toasts')?.childNodes.length || 0;
+    const toastsBefore = shown();
+    made[0].handlers.error('error', { fatal: true, type: 'key' });
+    assert.equal(player.fading, null, 'the fade is ended');
+    assert.equal(outgoingHls.destroyed, true, 'the outgoing deck is released');
+    assert.equal(outgoing.hls, null);
+    assert.equal(outgoing.track, null);
+    assert.equal(made[0].destroyed, true, 'the incoming deck is released');
+    assert.equal(incoming.hls, null);
+    assert.equal(incoming.track, null);
+    for (const audio of [outgoing.audio, incoming.audio]) assert.ok(fades.some(([a, v]) => a === audio && v === 1), 'fade gain restored');
+    assert.equal(player.lock, null, 'no beat lock left');
+    assert.equal(player.tempoRelease, null, 'no tempo glide left on the dead deck');
+    assert.ok(stops.length > 0, 'the lock was stopped');
+    assert.equal(player.listening.has(incoming.audio), false, 'no song-memory listener left on the dead deck');
+    assert.ok(unwatched.includes(incoming.audio), 'the dead deck is no longer beat-watched');
+    assert.equal(player.loading, false);
+    assert.equal(shown() - toastsBefore, 1, 'one toast');
+    await new Promise(resolve => setTimeout(resolve, 900));
+    assert.equal(next.mock.callCount(), last ? 0 : 1, last ? 'last song: nothing to skip to' : 'moves on to the song after the failed one');
+  };
+
+  test('a license failure on the deck fading in ends the fade, releases both decks and skips past the failed song', async (t) => {
+    try { await failWhileFadingIn(t, { style: 'blend', last: false }); } finally { cleanup(); }
+  });
+
+  test('a license failure on the last song while it fades in ends the fade and does not skip', async (t) => {
+    try { await failWhileFadingIn(t, { style: 'blend', last: true }); } finally { cleanup(); }
+  });
+
+  test('a license failure on the deck of a drop cut fade ends it the same way', async (t) => {
+    try { await failWhileFadingIn(t, { style: 'dropcut', last: false }); } finally { cleanup(); }
+  });
+
   test('a refresh that comes back after the listener picked another song does not re-attach the old one', async (t) => {
     mockApi(t);
     try {

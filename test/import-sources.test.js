@@ -100,3 +100,30 @@ test('searches go to the right sites, never carry a login, and are spaced per si
   assert.ok(waits[0] > 0 && waits[0] <= 500);
   await assert.rejects(() => sources.audiusSearch('   '), /Nothing to search for/);
 });
+
+// the user agent is built when the module loads, so load a fresh copy with process.versions.chrome set to `chrome`
+const agentFor = async (chrome) => {
+  const modulePath = require.resolve('../import-sources.js');
+  const own = Object.getOwnPropertyDescriptor(process.versions, 'chrome');
+  const cached = require.cache[modulePath];
+  delete require.cache[modulePath];
+  Object.defineProperty(process.versions, 'chrome', { value: chrome, configurable: true, enumerable: true, writable: true });
+  try {
+    let agent = '';
+    const sources = require(modulePath).createSources({ gap: 0, fetch: async (url, options) => { agent = options.headers['User-Agent']; return reply(page({ trackList: [] })); } });
+    await sources.spotifyPlaylist(`https://open.spotify.com/playlist/${ID}`);
+    return agent;
+  } finally {
+    if (own) Object.defineProperty(process.versions, 'chrome', own); else delete process.versions.chrome;
+    delete require.cache[modulePath];
+    if (cached) require.cache[modulePath] = cached;
+  }
+};
+
+test('the browser user agent names the running Chrome major version', async () => {
+  assert.match(await agentFor('156.0.8078.75'), /Chrome\/156\.0\.0\.0 Safari/);
+});
+
+test('the browser user agent falls back to Chrome 130 when the version is unknown', async () => {
+  assert.match(await agentFor(undefined), /Chrome\/130\.0\.0\.0 Safari/);
+});

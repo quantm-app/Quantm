@@ -4,7 +4,7 @@
 // ever get the user's SoundCloud login. Requests to each site are spaced out so one import
 // never sends more than about two per second.
 
-const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + String(process.versions.chrome || '130').split('.')[0] + '.0.0.0 Safari/537.36';
 const TIMEOUT = 10000;
 const MIN_GAP = 500;
 const RESULTS = 8;
